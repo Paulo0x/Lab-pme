@@ -13,8 +13,8 @@ sécurisation, tests de validation et procédures.
 | # | Brique | Technologies | Statut |
 | --- | --- | --- | --- |
 | 00 | [Hyperviseur](00-proxmox/) | Proxmox VE 9, LVM-thin, RBAC, 2FA TOTP | ✅ Terminé |
-| 01 | Pare-feu et VLAN | pfSense | 🔜 En cours |
-| 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | ⏳ À faire |
+| 01 | [Pare-feu et VLAN](01-pfsense/) | pfSense CE 2.9, 5 VLAN, DHCP, règles, recette | ✅ Terminé |
+| 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 En cours |
 | 03 | Annuaire | Windows Server 2025 : AD, DNS, DHCP | ⏳ À faire |
 | 04 | Postes de travail | Windows 11, GPO, LAPS | ⏳ À faire |
 | 05 | Support et parc | GLPI | ⏳ À faire |
