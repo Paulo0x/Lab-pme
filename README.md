@@ -25,6 +25,24 @@ sécurisation, tests de validation et procédures.
 | 10 | Automatisation et IA | n8n + Ollama (alertes Zabbix → tickets GLPI) | ⏳ À faire |
 | 11 | Sécurité | Wazuh | ⏳ À faire |
 
+**Briques bonus**, ce qu'on croise partout en PME :
+
+| # | Brique | Technologies | Statut |
+| --- | --- | --- | --- |
+| 12 | Serveur de fichiers | Partages, droits NTFS, quotas, DFS | ⏳ À faire |
+| 13 | Impression | Serveur d'impression, déploiement par GPO | ⏳ À faire |
+| 14 | Déploiement de postes | Image maître, WDS/MDT ou Autopilot | ⏳ À faire |
+| 15 | Téléphonie IP | 3CX ou FreePBX, VLAN voix, QoS, téléphone PoE | ⏳ À faire |
+| 16 | Pare-feu Fortinet | FortiGate VM, comparé à pfSense | ⏳ À faire |
+| 17 | Contrôle d'accès réseau | 802.1X, NPS (RADIUS), switch Cisco | ⏳ À faire |
+| 18 | VPN nomades | WireGuard / OpenVPN sur pfSense | ⏳ À faire |
+| 19 | Certificats | PKI Windows (AD CS) | ⏳ À faire |
+| 20 | Mises à jour | WSUS | ⏳ À faire |
+| 21 | Prise en main à distance | RustDesk auto-hébergé | ⏳ À faire |
+| 22 | Mots de passe d'entreprise | Vaultwarden | ⏳ À faire |
+| 23 | Onduleur | Arrêt propre sur coupure (NUT) | ⏳ À faire |
+| 24 | Linux et automatisation | Debian, SSH, Ansible, Docker | ⏳ À faire |
+
 ## Architecture cible
 
 ```
