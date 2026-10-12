@@ -318,7 +318,21 @@ Request (le poste l'accepte), Ack (pfSense confirme le bail).
 - **Pourquoi une adresse fixe pour un pare-feu ?** Règles, VPN et documentation s'appuient
   sur son adresse : elle ne doit jamais changer.
 
-## 18. Points en suspens
+## 18. Écarts lab / entreprise
+
+| Lab | Entreprise | Pourquoi l'écart, et le risque |
+| --- | --- | --- |
+| Pare-feu en **VM** sur le même serveur que tout le reste | Boîtier dédié, souvent en paire haute disponibilité (CARP) | Si Proxmox tombe ou est compromis, le pare-feu tombe avec. Choix assumé pour un lab sur un seul PC |
+| Règles « → tout » (`any`) sur Serveurs et Postes au départ | Une règle par besoin (moindre privilège) | Simplification du démarrage. **Corrigé pour Serveurs à la brique 03** ; Postes à la brique 04 |
+| Règle WAN temporaire vers l'interface web | Administration uniquement depuis le VLAN d'administration | Pas de switch au départ. À supprimer à la brique 02 |
+| DHCP temporaire sur pfSense pour les postes | DHCP Windows (intégré à l'AD) + relais | **Remplacé à la brique 03** |
+| Blocage des réseaux privés décoché sur le WAN | Coché : le WAN est directement sur Internet | Ici, le WAN est dans le réseau de la box (192.168.1.0/24, donc privé) : double NAT de lab |
+| Pas de sauvegarde de configuration au départ | Sauvegarde avant chaque modification | **Faite à partir du 11 oct.** (procédure pare-feu) |
+| Journaux uniquement en local | Envoi vers un serveur de journaux central (syslog, SIEM) | Prévu avec Wazuh (brique 11) |
+| Fuseau horaire réglé sans redémarrer | Redémarrage planifié après les réglages système | Les journaux sont restés en UTC jusqu'au redémarrage du 12 oct. |
+| Domaine `lab.home.arpa` | `ad.entreprise.fr` | Windows classe les zones `.arpa` en inversées (voir brique 03) |
+
+## 19. Points en suspens
 
 - Règles des VLAN Wi-Fi (30, 40) et Serveurs (10), avec des groupes d'interfaces :
   à faire avec la brique 02 (switch et borne Wi-Fi).

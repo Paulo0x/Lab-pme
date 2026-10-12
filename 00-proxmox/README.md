@@ -446,7 +446,19 @@ Permissions → Double facteur → Ajouter :
 - **Ton installation a planté, qu'as-tu fait ?** Règle du dernier changement : retour à la
   configuration stable (E-cores désactivés), un seul changement à la fois, cause confirmée.
 
-## 14. Points en suspens
+## 14. Écarts lab / entreprise
+
+| Lab | Entreprise | Pourquoi l'écart, et le risque |
+| --- | --- | --- |
+| **Un seul** serveur Proxmox | Cluster d'au moins 3 nœuds (ou 2 + un arbitre) | S'il tombe, **tout** le SI s'arrête (pare-feu compris). Point de panne unique assumé pour un lab |
+| Mini PC grand public, un seul disque | Serveur avec alimentations redondantes, mémoire ECC, disques en RAID ou en miroir | Coût. Une panne de disque = perte de toutes les VM |
+| Pas encore de sauvegarde externe | Proxmox Backup Server ou Veeam, avec une copie hors site | Prévue à la brique 07. Les instantanés ne sont **pas** des sauvegardes |
+| Administration depuis le réseau de la box | Réseau d'administration dédié (VLAN 99) | Attend le switch (brique 02) |
+| Certificat auto-signé | Certificat de l'autorité interne ou public | Prévu après l'AD (PKI, brique 19) |
+| Dépôt « No-Subscription » | Dépôt « Enterprise » avec support | Coût ; les mises à jour sont les mêmes, testées moins longtemps |
+| E-cores désactivés dans le BIOS | Matériel validé par l'éditeur | Contournement d'un plantage à l'installation, à retester |
+
+## 15. Points en suspens
 
 - Retester l'activation des E-cores sous charge (ou après une mise à jour du BIOS).
 - Remplacer le certificat auto-signé par un certificat de l'entreprise (après la brique Active Directory).

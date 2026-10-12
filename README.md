@@ -15,8 +15,8 @@ sécurisation, tests de validation et procédures.
 | 00 | [Hyperviseur](00-proxmox/) | Proxmox VE 9, LVM-thin, RBAC, 2FA TOTP | ✅ Terminé |
 | 01 | [Pare-feu et VLAN](01-pfsense/) | pfSense CE 2.9, 5 VLAN, DHCP, règles, recette | ✅ Terminé |
 | 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 En cours |
-| 03 | Annuaire | Windows Server 2025 : AD, DNS, DHCP | ⏳ À faire |
-| 04 | Postes de travail | Windows 11, GPO, LAPS | ⏳ À faire |
+| 03 | [Annuaire](03-active-directory/) | Windows Server 2025 : AD DS, DNS, DHCP + relais, OU, GPO, FGPP, PowerShell | ✅ Terminé |
+| 04 | Postes de travail | Windows 11, GPO, LAPS | 🔜 Prochaine |
 | 05 | Support et parc | GLPI | ⏳ À faire |
 | 06 | Supervision | Zabbix | ⏳ À faire |
 | 07 | Sauvegarde | Veeam | ⏳ À faire |
@@ -24,24 +24,6 @@ sécurisation, tests de validation et procédures.
 | 09 | Automatisation | PowerShell | ⏳ À faire |
 | 10 | Automatisation et IA | n8n + Ollama (alertes Zabbix → tickets GLPI) | ⏳ À faire |
 | 11 | Sécurité | Wazuh | ⏳ À faire |
-
-**Briques bonus**, ce qu'on croise partout en PME :
-
-| # | Brique | Technologies | Statut |
-| --- | --- | --- | --- |
-| 12 | Serveur de fichiers | Partages, droits NTFS, quotas, DFS | ⏳ À faire |
-| 13 | Impression | Serveur d'impression, déploiement par GPO | ⏳ À faire |
-| 14 | Déploiement de postes | Image maître, WDS/MDT ou Autopilot | ⏳ À faire |
-| 15 | Téléphonie IP | 3CX ou FreePBX, VLAN voix, QoS, téléphone PoE | ⏳ À faire |
-| 16 | Pare-feu Fortinet | FortiGate VM, comparé à pfSense | ⏳ À faire |
-| 17 | Contrôle d'accès réseau | 802.1X, NPS (RADIUS), switch Cisco | ⏳ À faire |
-| 18 | VPN nomades | WireGuard / OpenVPN sur pfSense | ⏳ À faire |
-| 19 | Certificats | PKI Windows (AD CS) | ⏳ À faire |
-| 20 | Mises à jour | WSUS | ⏳ À faire |
-| 21 | Prise en main à distance | RustDesk auto-hébergé | ⏳ À faire |
-| 22 | Mots de passe d'entreprise | Vaultwarden | ⏳ À faire |
-| 23 | Onduleur | Arrêt propre sur coupure (NUT) | ⏳ À faire |
-| 24 | Linux et automatisation | Debian, SSH, Ansible, Docker | ⏳ À faire |
 
 ## Architecture cible
 
@@ -67,6 +49,18 @@ Internet
 | 99 | Administration (switch, borne) | 10.10.99.0/24 |
 
 Détails : [plan d'adressage](docs/plan-adressage.md).
+
+![Architecture du lab](docs/lab-pme-architecture.png)
+
+## Documentation transverse
+
+| Document | Contenu |
+| --- | --- |
+| [Plan d'adressage](docs/plan-adressage.md) | Réseaux, passerelles, DHCP, adresses fixes, zones DNS |
+| [Matrice des flux](docs/matrice-des-flux.md) | Chaque règle du pare-feu et sa raison |
+| [Conventions](docs/conventions.md) | Nommage des comptes, groupes, OU, GPO ; règles de mots de passe |
+| [Procédure pare-feu](docs/procedure-pare-feu.md) | Modifier une règle sans risque, en 12 étapes |
+| [Infographie](docs/lab-pme-infographie.png) | Le lab en un coup d'œil |
 
 ## Matériel
 
