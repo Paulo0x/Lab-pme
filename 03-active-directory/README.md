@@ -505,7 +505,7 @@ New-GPLink -Name C_Securite_Verrouillage_Inactivite -Target "OU=Ordinateurs,$bas
 - 2e contrôleur de domaine (SRV-AD02) et basculement DHCP.
 - Étendues DHCP des VLAN Wi-Fi (30, 40).
 - Règles précises du VLAN Postes (ports AD) avec la brique 04.
-- Test de la GPO de verrouillage sur un poste Windows 11 (brique 04).
+- ~~Test de la GPO de verrouillage sur un poste Windows 11~~ : fait en brique 04 (verrouillage à 10 min pile, après neutralisation de l'extinction d'écran).
 - Confirmer le retour du relais DHCP par capture de paquets.
 - Compte dédié pour les mises à jour DNS du serveur DHCP (`Set-DhcpServerDnsCredential`).
 - Mot de passe du compte `Administrateur` dans un gestionnaire de mots de passe.

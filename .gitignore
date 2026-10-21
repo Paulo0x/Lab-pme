@@ -1,0 +1,11 @@
+# Sauvegardes de configuration : contiennent des donnees sensibles, jamais sur GitHub
+*.xml
+config-*
+_to_delete/
+*NE-PAS-PUBLIER*
+brouillons/
+
+# Recherche d emploi / LinkedIn : noms de personnes, prive
+journal-recherche-emploi.md
+A-FAIRE.md
+_a-publier-github*/

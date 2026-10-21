@@ -16,8 +16,8 @@ sécurisation, tests de validation et procédures.
 | 01 | [Pare-feu et VLAN](01-pfsense/) | pfSense CE 2.9, 5 VLAN, DHCP, règles, recette | ✅ Terminé |
 | 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 En cours |
 | 03 | [Annuaire](03-active-directory/) | Windows Server 2025 : AD DS, DNS, DHCP + relais, OU, GPO, FGPP, PowerShell | ✅ Terminé |
-| 04 | Postes de travail | Windows 11, GPO, LAPS | 🔜 Prochaine |
-| 05 | Support et parc | GLPI | ⏳ À faire |
+| 04 | [Postes de travail](04-postes-gpo/) | Windows 11 Entreprise, jonction, GPO (pare-feu, alimentation), RSOP à distance, durcissement AD, délégation, Windows LAPS chiffré | ✅ Terminé |
+| 05 | Support et parc | GLPI | 🔜 Prochaine |
 | 06 | Supervision | Zabbix | ⏳ À faire |
 | 07 | Sauvegarde | Veeam | ⏳ À faire |
 | 08 | Cloud Microsoft | Microsoft 365, Intune, Entra ID | ⏳ À faire |

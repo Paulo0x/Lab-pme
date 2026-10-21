@@ -67,6 +67,8 @@ lier de GPO. D'où la redirection (`redircmp`, `redirusr`) vers les OU AEROTRANS
 | Stratégie de mot de passe affinée | `PSO-Cible` | `PSO-Admins` | |
 | Serveur | `SRV-ROLENN` | `SRV-AD01` | |
 | Poste fixe / portable | `PC-NNN` / `PO-NNN` | `PC-001` | |
+| Compte local de secours (LAPS) | `secours.local` | `secours.local` | Créé et géré par Windows LAPS sur chaque poste ; l'`Administrateur` intégré reste désactivé |
+| GPO de configuration (non sécurité) | `C_Config_Objet` | `C_Config_Alimentation` | |
 
 **AGDLP** : les **A**ccounts vont dans des groupes **G**lobaux, qui vont dans des groupes
 **D**omaine **L**ocal, qui reçoivent les **P**ermissions. On ne donne jamais un droit
@@ -90,3 +92,9 @@ directement à un compte.
   délégué ». Le compte `Administrateur` intégré est un compte **de secours**, hors Protected Users.
 - Départ d'un salarié : compte **désactivé** et déplacé dans `Desactives`, supprimé après
   quelques mois.
+
+## 6. Postes de travail (brique 04)
+
+- Comptes locaux : tous désactivés, sauf `secours.local`, géré par LAPS (20 caractères, 30 jours, chiffré, lisible par les Admins du domaine).
+- Joindre un PC au domaine : membres de `GG_Informatique` (via `DL_OU-Ordinateurs_JoindrePC`), sans être admin du domaine. `ms-DS-MachineAccountQuota` = 0.
+- Groupe **Administrateurs du schéma** : vide en temps normal (seul `Administrateur`), rempli seulement le temps d'une opération.

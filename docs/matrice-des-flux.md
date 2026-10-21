@@ -4,7 +4,7 @@
 > nouvel admin demande en premier. Chaque règle du pare-feu doit y figurer, avec sa raison.
 > Tout flux absent de ce tableau est **refusé** (refus par défaut de pfSense) et journalisé.
 
-Mise à jour : 12 oct. 2026 (fin de la brique 03).
+Mise à jour : 15 oct. 2026 (brique 04).
 
 ## 1. Flux en place
 
@@ -18,9 +18,10 @@ Mise à jour : 12 oct. 2026 (fin de la brique 03).
 | 4 | Autoriser | Serveurs | pfSense (SERVEURS address) | UDP 123 | NTP : le DC prend l'heure sur pfSense (Kerberos refuse plus de 5 min d'écart) | non |
 | 5 | Autoriser | Serveurs | **Internet uniquement** (`! RESEAUX_PRIVES`) | TCP 80, 443 (`PORTS_WEB`) | Mises à jour Windows et vérification des certificats (CRL/OCSP). L'inversion interdit d'utiliser ces ports vers les autres VLAN | non |
 | 6 | Autoriser | Serveurs | tout | ICMP echo request | Ping pour le dépannage (compromis PME, ports fermés malgré tout) | non |
+| 7 | Autoriser | **SRV-AD01** (10.10.10.10) | Postes (VLAN 20) | TCP 135 + TCP 49152-65535 (RPC / WMI) | Administration à distance des postes depuis le serveur : vérifier les GPO appliquées (Résultats de stratégie de groupe), journaux. Limité au seul DC, pas à tout le VLAN Serveurs. Ajouté le 15 oct. 2026, en place le 21 oct. (alias `PORTS_RPC_WMI`). Côté poste, le pare-feu Windows est ouvert par la GPO `C_Securite_PareFeu_Administration` (WMI, source 10.10.10.10, profil Domaine) | non |
 | — | **Refuser** | tout le reste | | | Refus par défaut | oui |
 
-Alias utilisés : `PORTS_WEB` = 80, 443 ; `RESEAUX_PRIVES` = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 (RFC 1918).
+Alias utilisés : `PORTS_WEB` = 80, 443 ; `PORTS_RPC_WMI` = 135, 49152:65535 ; `RESEAUX_PRIVES` = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 (RFC 1918).
 
 ### VLAN 20 · Postes (interface POSTES)
 
