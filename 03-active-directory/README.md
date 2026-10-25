@@ -1,23 +1,69 @@
 # Brique 03 — Active Directory, DNS et DHCP sous Windows Server 2025
 
-> Procédure d'intervention rédigée comme chez un client : chaque étape indique
-> **quoi faire**, **pourquoi**, **comment vérifier** et **quoi faire si ça échoue**.
-> Les étapes ont été faites à l'interface graphique ; la commande PowerShell équivalente
-> est donnée à chaque fois (section 20).
+> **Tuto pas à pas, écrit pour quelqu'un qui débute.** Chaque étape dit **pourquoi** on la fait,
+> **où cliquer** ou **quoi taper**, **ce qu'on doit voir**, et **quoi faire si ça ne marche pas**.
+> Les étapes sont faites à l'interface graphique ; les commandes PowerShell équivalentes sont en
+> annexe B. Les erreurs faites pendant le lab sont laissées volontairement, avec leur correction.
+> Les captures sont dans le dossier [`captures/`](captures/).
 
-## 1. Besoin du client
+## Comment lire ce tuto
+
+| Repère | Sens |
+| --- | --- |
+| 🎯 | **Le but** de l'étape |
+| 🖱️ | Ce qu'on fait **à la souris** (menus, boutons, cases) |
+| ⌨️ | Ce qu'on **tape**, avec l'explication |
+| ✅ | Ce qu'on **doit voir** si tout va bien |
+| ❌ | **Si ça ne marche pas** (souvent : l'erreur qu'on a vraiment eue) |
+| 🏢 | **En entreprise**, quand on ferait autrement |
+| 💡 | Une explication pour bien comprendre |
+
+---
+
+## Résumé pour les pressés
+
+- **SRV-AD01** (Windows Server 2025, 10.10.10.10, VLAN 10) : contrôleur de domaine de la forêt
+  **`lab.home.arpa`** (NetBIOS `LAB`), DNS intégré (5 zones inversées, mises à jour sécurisées,
+  redirecteur vers pfSense), **DHCP** du VLAN Postes via le **relais** de pfSense.
+- **Organisation** : OU `AEROTRANS` protégées, corbeille AD, `redircmp` / `redirusr`, 7 groupes
+  `GG_Service`, **24 salariés importés par script** depuis un CSV (simulation d'abord).
+- **Sécurité** : compte admin nominatif `adm.paulo.rosa` (Protected Users, non délégable),
+  `Administrateur` gardé en secours, politique de mot de passe (12 caractères) + **PSO-Admins**
+  (15 caractères), heure synchronisée sur pfSense (Kerberos), **pare-feu du VLAN Serveurs au moindre
+  privilège**, première GPO (verrouillage après 10 min).
+- **Santé** : `dcdiag` 28 tests réussis.
+
+---
+
+## Partie 0 — Comprendre avant de commencer
+
+### 0.1 Le besoin du client
 
 AEROTRANS (25 salariés) veut :
 
-- **un compte par personne**, géré à un seul endroit, avec des règles de mot de passe ;
+- **un compte par personne**, géré à **un seul endroit**, avec des règles de mot de passe ;
 - des **droits par service** (la compta ne voit pas les dossiers RH) ;
-- des **postes qui s'appliquent tout seuls les règles de sécurité** (verrouillage, etc.) ;
+- des **postes qui appliquent tout seuls** les règles de sécurité ;
 - des **adresses IP distribuées automatiquement** aux postes ;
 - de la **traçabilité** : savoir qui a fait quoi.
 
-C'est le rôle d'un **annuaire Active Directory**, avec son DNS et son DHCP.
+C'est le rôle d'un **annuaire Active Directory** (AD), avec son **DNS** et son **DHCP**.
 
-## 2. Choix de la techno
+### 0.2 Les mots à connaître, avec des images
+
+| Mot | Ce que c'est | Image |
+| --- | --- | --- |
+| **Active Directory (AD)** | L'annuaire de l'entreprise : comptes, groupes, ordinateurs, règles | Le **registre du personnel** + le **règlement intérieur** |
+| **Domaine** (`lab.home.arpa`) | L'ensemble géré par l'AD | L'**entreprise** elle-même |
+| **Contrôleur de domaine (DC)** | Le serveur qui héberge l'AD et vérifie les mots de passe | L'**accueil** qui vérifie les badges |
+| **OU** (unité d'organisation) | Un dossier pour **ranger** les objets et leur appliquer des règles | Les **services** sur l'organigramme |
+| **Groupe** | Un ensemble de comptes, pour **donner des droits** | Une **liste de diffusion** : on donne l'accès à la liste, pas à chaque personne |
+| **GPO** (stratégie de groupe) | Un paquet de réglages appliqué automatiquement aux PC ou aux utilisateurs d'une OU | Une **note de service** affichée dans un service |
+| **DNS** | Traduit les **noms** en **adresses IP** | L'**annuaire téléphonique** |
+| **DHCP** | Distribue automatiquement les adresses IP aux PC | Le **guichet** qui attribue les places de parking |
+| **Kerberos** | Le système de « tickets » de connexion de l'AD | Un **bracelet** donné à l'entrée, valable quelques heures |
+
+### 0.3 Le choix de l'outil
 
 | Critère | Windows Server 2025 (AD DS) | Samba AD (Linux) | Entra ID seul (cloud) |
 | --- | --- | --- | --- |
@@ -26,11 +72,10 @@ C'est le rôle d'un **annuaire Active Directory**, avec son DNS et son DHCP.
 | Postes sans Internet | Oui | Oui | Non |
 | Coût | Licence (évaluation 180 j ici) | Gratuit | Abonnement |
 
-**Choix retenu : Windows Server 2025 Standard**, avec l'expérience utilisateur (interface
-graphique) pour apprendre. En production, l'installation **Core** (sans interface) réduit
-la surface d'attaque et le nombre de mises à jour.
+**Choix : Windows Server 2025 Standard**, **avec l'interface graphique** pour apprendre.
+🏢 En production, l'installation **Core** (sans interface) réduit la surface d'attaque et les mises à jour.
 
-## 3. Architecture cible
+### 0.4 L'architecture
 
 ```
                      pfSense (fw01)
@@ -49,159 +94,406 @@ la surface d'attaque et le nombre de mises à jour.
 Adresses : [plan d'adressage](../docs/plan-adressage.md) · Flux : [matrice des flux](../docs/matrice-des-flux.md) ·
 Noms : [conventions](../docs/conventions.md).
 
-## 4. Préparation
+---
 
-- ISO **Windows Server 2025 Evaluation (français)**, empreinte SHA-256 vérifiée à l'envoi dans Proxmox.
-- ISO **virtio-win** (pilotes Red Hat pour les disques et cartes réseau virtuels).
+## Partie 1 — La machine virtuelle
+
+### Étape 1 · Les ISO
+
+🖱️ Proxmox > **local (pve01)** > **Images ISO** :
+
+1. **Téléverser** l'ISO **Windows Server 2025 Evaluation (français)**, avec l'empreinte **SHA-256**
+   (Proxmox vérifie le fichier à l'arrivée). ✅ `checksum verified`, `TASK OK`.
+2. **Télécharger depuis une URL** l'ISO **virtio-win** : les **pilotes** Red Hat pour les disques et
+   cartes réseau virtuels de Proxmox (Windows ne les connaît pas d'origine).
 
 ![ISO vérifiée](captures/01-upload-iso-winserver-sha256-ok.png)
+![virtio-win](captures/02-telechargement-virtio-win.png)
 
-### Machine virtuelle 200 · SRV-AD01
+### Étape 2 · Créer la VM 200 · SRV-AD01
 
-| Paramètre | Valeur | Pourquoi |
-| --- | --- | --- |
-| Machine | q35, BIOS **OVMF (UEFI)** + disque EFI, **TPM 2.0** | Exigences de Windows Server 2025, démarrage sécurisé |
-| Contrôleur | VirtIO SCSI single | Meilleures performances |
-| Disque | 60 Go, discard, IO thread, **SSD** coché | « SSD » : Windows optimise pour un SSD (TRIM) |
-| Processeur | 2 cœurs, type **host** | Toutes les instructions du vrai processeur |
-| Mémoire | 4 Go, **sans ballooning** | Un DC ne doit pas voir sa RAM changer en cours de route |
-| Réseau | VirtIO, vmbr1, **tag 10** | Directement dans le VLAN Serveurs |
-| Démarrage | automatique, ordre 2 | Après le pare-feu (ordre 1) |
+🖱️ **Créer une VM** (case **Avancé** cochée) :
 
+| Onglet | Réglage | Valeur | Pourquoi |
+| --- | --- | --- | --- |
+| Général | ID / Nom | `200` / `SRV-AD01` | 2xx = serveurs ; convention `SRV-ROLENN` |
+| | Démarrage auto / ordre | ✅ / `2` | Après le pare-feu (ordre 1) |
+| Système d'exploitation | ISO / type | Windows Server 2025 / **Microsoft Windows 11/2022/2025** | Proxmox adapte les réglages |
+| | ✅ Ajouter un lecteur pour les pilotes VirtIO | ISO virtio-win | Un 2e lecteur CD avec les pilotes |
+| Système | Machine / BIOS | **q35** / **OVMF (UEFI)** + disque EFI ; ✅ **TPM 2.0** | Exigences de Windows Server 2025, démarrage sécurisé |
+| | Contrôleur SCSI / agent QEMU | VirtIO SCSI single / ✅ | |
+| Disques | Taille / options | `60` Gio, ✅ discard, ✅ IO thread, ✅ **SSD** | « SSD » : Windows optimise pour un SSD (TRIM) |
+| Processeur | Cœurs / type | `2`, **host** | |
+| Mémoire | Taille / ballooning | `4096`, ❌ | Un DC ne doit pas voir sa mémoire changer en cours de route |
+| Réseau | Pont / tag / modèle | `vmbr1`, **`10`**, VirtIO | Directement dans le VLAN Serveurs |
+
+![Général](captures/03-creation-vm-general.png)
+![Système d'exploitation](captures/04-creation-vm-systeme-exploitation.png)
+![UEFI et TPM](captures/05-creation-vm-systeme-uefi-tpm.png)
+![Disque](captures/06-creation-vm-disque.png)
+![Processeur](captures/07-creation-vm-processeur.png)
+![Mémoire](captures/08-creation-vm-memoire.png)
 ![Réseau VLAN 10](captures/09-creation-vm-reseau-vlan10.png)
+![Confirmation](captures/10-creation-vm-confirmation-1.png)
 
-**Erreurs corrigées en relisant le récapitulatif :** case SSD oubliée, démarrage automatique
-oublié. Toujours relire avant de valider.
+❌ **Erreurs corrigées en relisant le récapitulatif** : case **SSD** oubliée et **démarrage automatique**
+oublié. 👉 **Toujours relire le récapitulatif avant Terminer.** (La case SSD a été corrigée après coup :
+Matériel > disque > Éditer.)
 
-## 5. Installation
+![SSD corrigé](captures/17-materiel-vm200-ssd-corrige.png)
 
-1. Édition **Standard Evaluation (expérience de bureau)**.
-2. **Aucun disque visible** : normal, Windows ne connaît pas le contrôleur VirtIO.
-   « Charger un pilote » → lecteur virtio-win → `vioscsi\2k25\amd64`. Le disque de 60 Go apparaît.
-3. Mot de passe `Administrateur` long (14 caractères), tapé à la main, rangé au coffre.
-4. Après l'installation : **virtio-win-guest-tools** (pilotes réseau + agent QEMU).
+---
+
+## Partie 2 — Installer Windows Server
+
+### Étape 3 · L'installation
+
+🖱️ Démarre la VM > **Console** (appuie sur une touche si « Press any key to boot from CD » s'affiche) :
+
+1. Langue **Français**, clavier **Français** > **Suivant** > **Installer Windows Server**.
+2. Édition : **Windows Server 2025 Standard Evaluation (expérience de bureau)**.
+   💡 « Expérience de bureau » = avec l'interface graphique.
+
+![Langue](captures/12-install-langue.png)
+![Édition](captures/13-install-choix-edition.png)
+
+3. ❌ **Aucun disque visible** : normal, Windows ne connaît pas le contrôleur **VirtIO**.
+   🖱️ **Charger un pilote** > **Parcourir** > lecteur **virtio-win** > `vioscsi\2k25\amd64` > **OK** >
+   **Suivant**. ✅ Le disque de 60 Go apparaît.
 
 ![Pilote vioscsi](captures/14-install-pilote-vioscsi.png)
+![Disque visible](captures/15-install-disque-60go.png)
+![Récapitulatif](captures/16-install-recapitulatif.png)
 
-## 6. Réseau du serveur et premières règles du VLAN 10
+4. Mot de passe du compte **`Administrateur`** : long (14 caractères), tapé à la main, rangé au coffre.
 
-Sans DHCP dans le VLAN 10, Windows se donne une adresse **APIPA** (169.254.x.x) : il ne
-peut parler à personne. On fixe l'adresse :
+![Mot de passe (masqué)](captures/18-mot-de-passe-administrateur.png)
 
-| Paramètre | Valeur |
-| --- | --- |
-| Nom | SRV-AD01 (renommé **avant** la promotion) |
-| IP | 10.10.10.10/24 |
-| Passerelle | 10.10.10.254 (pfSense) |
-| DNS | 10.10.10.10 (lui-même : il sera le DNS du domaine) |
+5. Connexion (**Ctrl + Alt + Suppr** : dans la console Proxmox, bouton **A** en haut à gauche ou menu
+   des touches). Le **Gestionnaire de serveur** s'ouvre.
+
+![Connexion](captures/19-ecran-connexion.png)
+![Gestionnaire de serveur](captures/20-gestionnaire-de-serveur.png)
+
+6. Lecteur virtio-win > double-clic sur **virtio-win-guest-tools** > installer : tous les pilotes
+   (réseau…) + l'**agent QEMU**.
+
+---
+
+## Partie 3 — Le réseau du serveur
+
+### Étape 4 · Donner une IP fixe
+
+❌ **Constat** : `ipconfig` montre une adresse **169.254.x.x** (« APIPA »). 💡 Windows se donne cette
+adresse **tout seul** quand il ne trouve aucun serveur DHCP : il ne peut parler à personne. Normal : il
+n'y a pas de DHCP dans le VLAN 10, et **un serveur a de toute façon une IP fixe**.
 
 ![APIPA](captures/21-ipconfig-apipa-169-254.png)
+
+🖱️ **Gestionnaire de serveur** > **Serveur local** > clic sur **Ethernet** > clic droit sur la carte >
+**Propriétés** > **Protocole Internet version 4 (TCP/IPv4)** > **Propriétés** :
+
+| Champ | Valeur | Pourquoi |
+| --- | --- | --- |
+| Adresse IP | `10.10.10.10` | Plan d'adressage |
+| Masque | `255.255.255.0` | /24 |
+| Passerelle | `10.10.10.254` | pfSense |
+| DNS préféré | `10.10.10.10` | **Lui-même** : il sera le DNS du domaine (voir étape 6 pour le piège) |
+
+🖱️ **Nom de l'ordinateur** (Serveur local > Nom de l'ordinateur > **Modifier**) : `SRV-AD01` >
+redémarrage. 💡 **Renommer avant la promotion** en DC : après, c'est beaucoup plus compliqué.
+
+✅ `ipconfig /all` : `10.10.10.10`, passerelle `10.10.10.254`.
+
 ![IP fixe](captures/22-ipconfig-all-ip-fixe-srv-ad01.png)
 
-Sans règle sur l'interface SERVEURS, pfSense bloque tout (refus par défaut) : premier ping à
-100 % de perte. Trois règles provisoires sont posées (blocage vers l'admin, blocage de
-l'interface web, puis « vers Internet »), resserrées en section 14.
+### Étape 5 · Les premières règles pfSense du VLAN Serveurs
+
+❌ `ping 10.10.10.254` : **100 % de perte**. 💡 Sans règle sur l'interface SERVEURS, pfSense **bloque
+tout** (refus par défaut, brique 01).
 
 ![Ping bloqué](captures/23-ping-bloque-avant-regles.png)
 
-## 7. Mises à jour et instantané
+🖱️ pfSense > **Firewall > Rules** > **SERVEURS** : trois règles **provisoires** (resserrées en partie 9) :
 
-**Dépannage : « pas d'Internet » alors que `ping 1.1.1.1` répond.** Le DNS préféré est le
-serveur lui-même, mais le rôle DNS n'est pas encore installé : personne ne répond sur le port 53.
-Contournement le temps des mises à jour : DNS temporaire `10.10.10.254`, puis retour à
-`10.10.10.10` **juste avant** la promotion.
+| # | Action | Destination | Pourquoi |
+| --- | --- | --- | --- |
+| 1 | Block | LAN subnets (administration) | Un serveur compromis ne touche jamais aux équipements |
+| 2 | Block | This Firewall, TCP 443 | Pas d'accès à l'interface web du pare-feu |
+| 3 | Pass | any | Provisoire : mises à jour |
 
-![Diagnostic DNS](captures/30-diagnostic-dns-avant-promotion.png)
+![Règle 1](captures/24-regle1-block-serveurs-vers-admin.png)
+![Règle 2](captures/25-regle2-block-serveurs-vers-webgui.png)
+![Règle 3](captures/26-regle3-pass-serveurs-internet.png)
+![Appliquées](captures/27-regles-serveurs-appliquees.png)
 
-Instantané Proxmox **« avant_promotion »**, VM éteinte (état cohérent, sans RAM).
+✅ Le ping passe, et les blocages fonctionnent.
 
-> ⚠️ En production, on ne restaure **jamais** un instantané de contrôleur de domaine :
-> l'annuaire « reviendrait dans le passé » et se désynchroniserait des autres DC (*USN rollback*).
-> On utilise une vraie sauvegarde de l'état système (brique 07).
+![Ping OK](captures/28-ping-ok-apres-regles.png)
+![Blocages OK](captures/29-blocages-admin-et-webgui-ok.png)
+![Descriptions](captures/32-regles-serveurs-avec-descriptions.png)
 
-## 8. Rôle AD DS et promotion
+### Étape 6 · Dépannage : « pas d'Internet » alors que le ping marche
 
-Rôle **Services AD DS** + outils (GPMC, Centre d'administration AD, module PowerShell).
-DNS et DHCP ne sont pas cochés : le DNS est installé par la promotion, le DHCP vient après.
+❌ `ping 1.1.1.1` répond, mais Windows Update dit « pas d'Internet » et `Resolve-DnsName google.com` échoue.
 
-Promotion : **nouvelle forêt** `lab.home.arpa`.
+💡 **Cause** : le DNS préféré est le serveur **lui-même**… mais le rôle DNS **n'est pas encore installé**.
+Personne ne répond sur le port 53 (le port du DNS). Le ping par **IP** marche, les **noms** non.
 
-| Option | Valeur | Pourquoi |
+![Diagnostic](captures/30-diagnostic-dns-avant-promotion.png)
+
+✅ **Contournement** le temps des mises à jour : DNS temporaire **`10.10.10.254`** (pfSense), puis retour à
+`10.10.10.10` **juste avant** la promotion (étape 8).
+
+![DNS temporaire](captures/31-dns-temporaire-pfsense.png)
+
+### Étape 7 · Mises à jour et instantané
+
+🖱️ **Paramètres** > **Windows Update** > **Rechercher des mises à jour** > installer > redémarrer, jusqu'à
+« Vous êtes à jour ». Puis **DNS remis sur 10.10.10.10**.
+
+![À jour](captures/33-windows-update-a-jour.png)
+![DNS remis](captures/34-dns-remis-sur-10-10-10-10.png)
+
+🖱️ VM **éteinte**, instantané Proxmox `avant_promotion` (état cohérent, sans RAM).
+
+![Instantané](captures/35-snapshot-avant-promotion.png)
+
+⚠️ 🏢 En production, on ne restaure **jamais** un instantané de contrôleur de domaine : l'annuaire
+« reviendrait dans le passé » et se désynchroniserait des autres DC (*USN rollback*). On utilise une vraie
+**sauvegarde de l'état système** (brique 07).
+
+---
+
+## Partie 4 — Créer le domaine
+
+### Étape 8 · Installer le rôle AD DS
+
+🖱️ **Gestionnaire de serveur** > **Gérer** > **Ajouter des rôles et fonctionnalités** > Suivant ×3 >
+✅ **Services AD DS** > **Ajouter des fonctionnalités** (les outils : console GPMC, Centre
+d'administration AD, module PowerShell) > Suivant… > **Installer**.
+
+💡 On ne coche **ni DNS ni DHCP** ici : le DNS est installé par la promotion, le DHCP vient plus tard.
+
+![Fonctionnalités requises](captures/36-ajout-role-adds-fonctionnalites-requises.png)
+![AD DS coché](captures/37-role-adds-coche.png)
+![Confirmation](captures/38-confirmation-installation-adds.png)
+![Installé](captures/39-installation-adds-reussie.png)
+
+### Étape 9 · Promouvoir le serveur en contrôleur de domaine
+
+🖱️ Drapeau jaune ⚠️ en haut du Gestionnaire de serveur > **Promouvoir ce serveur en contrôleur de domaine** :
+
+![Configuration requise](captures/40-gestionnaire-adds-configuration-requise.png)
+![Promouvoir](captures/41-promouvoir-ce-serveur.png)
+
+| Écran | Choix | Pourquoi |
 | --- | --- | --- |
-| Niveaux fonctionnels | Windows Server 2025 | Pas d'ancien DC à prendre en compte |
-| DNS + catalogue global | oui | Premier DC de la forêt |
-| Mot de passe DSRM | **distinct** de l'Administrateur | Mode de restauration de l'annuaire |
-| NetBIOS | LAB | Ancien format `LAB\compte` |
+| Configuration du déploiement | **Ajouter une nouvelle forêt**, domaine racine `lab.home.arpa` | Le tout premier domaine |
+| Options du DC | Niveaux fonctionnels **Windows Server 2025** ; ✅ DNS ; ✅ Catalogue global ; mot de passe **DSRM** | Pas d'ancien DC à gérer. Le DSRM est le mot de passe du **mode de restauration** de l'annuaire : **différent** de celui de l'Administrateur, rangé au coffre |
+| Options DNS | Avertissement sur la délégation : **normal** | Il n'existe pas de zone parente `home.arpa` à qui déléguer |
+| NetBIOS | `LAB` | Ancien format `LAB\compte` |
+| Chemins | Par défaut | |
+| Examiner les options | Relire, puis **Suivant** | |
+| Vérification de la configuration requise | **Installer** | Le serveur redémarre tout seul |
 
-L'avertissement sur la délégation DNS est normal : il n'existe pas de zone parente `home.arpa` à déléguer.
+![Nouvelle forêt](captures/42-promotion-nouvelle-foret-lab-home-arpa.png)
+![Options](captures/43-promotion-options-dc-dns-gc-dsrm.png)
+![NetBIOS](captures/44-promotion-netbios-lab.png)
+![Examiner](captures/45-promotion-examiner-options.png)
+![Réussie](captures/46-promotion-reussie.png)
 
-![Promotion](captures/43-promotion-options-dc-dns-gc-dsrm.png)
-![Promotion réussie](captures/46-promotion-reussie.png)
+✅ Au redémarrage, on se connecte en **`LAB\Administrateur`** : le serveur est contrôleur du domaine.
 
-## 9. Vérifications après promotion
+![Connexion LAB](captures/47-connexion-lab-administrateur.png)
 
-| Vérification | Commande | Résultat |
+### Étape 10 · Vérifier le domaine
+
+⌨️ PowerShell :
+
+```powershell
+Get-ADDomain
+Resolve-DnsName _ldap._tcp.dc._msdcs.lab.home.arpa -Type SRV
+```
+- `Get-ADDomain` : les informations du domaine. ✅ `lab`, `lab.home.arpa`, `LAB`, `Windows2025Domain`.
+- `Resolve-DnsName … -Type SRV` : cherche l'enregistrement **SRV** qui permet aux PC de **trouver un DC**
+  (« où est le service LDAP du domaine ? »). ✅ `srv-ad01.lab.home.arpa`, port 389.
+
+❌ **Erreur du lab** : `_mcdcs` au lieu de `_msdcs` → introuvable. Une lettre suffit.
+
+![Faute de frappe](captures/48-verif-domaine-et-faute-de-frappe-msdcs.png)
+![SRV trouvé](captures/49-verif-srv-ldap-dc-trouvable.png)
+
+### Étape 11 · Le redirecteur DNS (pour Internet)
+
+💡 Le DC connaît `lab.home.arpa`, mais pas `google.com`. On lui dit : « ce que tu ne connais pas,
+demande-le à pfSense ».
+
+🖱️ **Outils** > **DNS** > clic droit sur **SRV-AD01** > **Propriétés** > onglet **Redirecteurs** >
+**Modifier** > `10.10.10.254` > **OK**.
+
+✅ `Resolve-DnsName google.com` répond.
+
+![Redirecteur](captures/50-redirecteur-dns-pfsense.png)
+![Internet OK](captures/51-resolution-internet-ok.png)
+
+---
+
+## Partie 5 — Le DNS en détail
+
+### Étape 12 · Les zones inversées (IP → nom)
+
+💡 Une zone **directe** traduit `srv-ad01` → `10.10.10.10`. Une zone **inversée** fait l'inverse
+(`10.10.10.10` → `srv-ad01`) : journaux lisibles, et certains outils l'exigent. Une par VLAN.
+
+🖱️ Console **DNS** > clic droit sur **Zones de recherche inversée** > **Nouvelle zone** :
+
+| Écran | Choix | Pourquoi |
 | --- | --- | --- |
-| Domaine | `Get-ADDomain` | lab / lab.home.arpa / LAB / Windows2025Domain |
-| Le DC est trouvable | `Resolve-DnsName _ldap._tcp.dc._msdcs.lab.home.arpa -Type SRV` | srv-ad01, port 389 |
-| Internet par nom | `Resolve-DnsName google.com` | OK après le redirecteur |
+| Type | Zone principale, ✅ stocker dans Active Directory | Répliquée avec l'AD, sécurisée |
+| Réplication | Tous les serveurs DNS de **ce domaine** | |
+| Type de recherche | IPv4 | |
+| ID réseau | `10.10.10` | 💡 La zone s'appellera `10.10.10.in-addr.arpa` : les chiffres sont **à l'envers** (le VLAN 20 donne `20.10.10.in-addr.arpa`) |
+| Mise à jour dynamique | ⭐ **N'autoriser que les mises à jour dynamiques sécurisées** | Seule une machine **membre du domaine** peut inscrire son nom : un intrus ne peut pas se déclarer `srv-ad01` |
 
-Premier essai en échec : faute de frappe `_mcdcs` au lieu de `_msdcs`.
+![Console DNS](captures/52-console-dns.png)
+![ID réseau](captures/54-zone-inverse-id-reseau.png)
+![Mises à jour sécurisées](captures/55-zone-inverse-maj-securisees.png)
+![Zone créée](captures/56-zone-inverse-10-10-10-creee.png)
 
-**Redirecteur DNS** vers `10.10.10.254` : ce que le DC ne connaît pas (google.com), il le
-demande au résolveur de pfSense.
+⌨️ Les 4 autres zones (20, 30, 40, 99) en PowerShell, d'un coup :
 
-![Enregistrement SRV](captures/49-verif-srv-ldap-dc-trouvable.png)
+```powershell
+20,30,40,99 | % { Add-DnsServerPrimaryZone -NetworkId "10.10.$_.0/24" -ReplicationScope Domain -DynamicUpdate Secure }
+```
+- `20,30,40,99 | % { … }` : « pour chaque nombre de la liste, fais… » (`%` = raccourci de `ForEach-Object`,
+  `$_` = le nombre en cours) ;
+- `Add-DnsServerPrimaryZone` : crée la zone, avec les mêmes options qu'à l'interface.
 
-## 10. DNS : zones inversées et piège `home.arpa`
+![Zones PowerShell](captures/57-zones-inverses-powershell.png)
 
-**Zones inversées** (IP → nom), une par VLAN, intégrées à l'AD, réplication « dans ce
-domaine », **mises à jour dynamiques sécurisées uniquement** (seule une machine membre du
-domaine peut inscrire son nom : un intrus ne peut pas se déclarer `srv-ad01`).
+⌨️ **Test** :
 
-La première à l'assistant, les quatre autres en PowerShell. Les chiffres sont à l'envers :
-le VLAN 20 donne la zone `20.10.10.in-addr.arpa`.
+```powershell
+nslookup 10.10.10.10
+ipconfig /registerdns
+nslookup 10.10.10.10
+```
+✅ D'abord « Non-existent domain » (la zone est vide), puis après `ipconfig /registerdns` (« inscris-toi
+dans le DNS ») et une minute d'attente : `SRV-AD01.lab.home.arpa`.
 
-Test : `nslookup 10.10.10.10` → « Non-existent domain » (zone vide) ; `ipconfig /registerdns` ;
-une minute plus tard → `SRV-AD01.lab.home.arpa`.
+![Vide](captures/58-nslookup-inverse-vide.png)
+![registerdns](captures/59-ipconfig-registerdns.png)
+![OK](captures/60-nslookup-inverse-ok.png)
 
-![Zones inversées](captures/57-zones-inverses-powershell.png)
-![nslookup inverse](captures/60-nslookup-inverse-ok.png)
+### Étape 13 · 🪤 Le piège de `home.arpa`
 
-> 🪤 **Piège repéré :** Windows range `lab.home.arpa` dans « Zones de recherche **inversées** »
-> (`IsReverseLookupZone = True`) : il considère toute zone qui finit par `.arpa` comme inversée.
-> La résolution fonctionne, seul le classement est faux. **En entreprise**, on choisit un
-> sous-domaine d'un nom qu'on possède : `ad.entreprise.fr`. Domaine conservé pour le lab.
+❌ **Constat** : la zone `lab.home.arpa` est rangée dans **Zones de recherche inversée**, et la zone
+directe paraît vide.
 
-![Piège home.arpa](captures/62-toutes-zones-dans-inversees.png)
+💡 **Cause** : Windows considère que **toute zone qui finit par `.arpa` est inversée** (parce que les
+zones inversées s'appellent `….in-addr.arpa`). PowerShell le confirme : `IsReverseLookupZone = True`.
+**La résolution fonctionne** ; seul le **classement** (et certains menus) est faux.
 
-## 11. Santé du contrôleur de domaine
+![Zone directe vide à l'affichage](captures/61-zone-directe-vide-affichage.png)
+![Toutes dans inversées](captures/62-toutes-zones-dans-inversees.png)
+![PowerShell](captures/53-zones-dns-powershell.png)
 
-`dcdiag /q` (mode silencieux : n'affiche que les erreurs) → **rien**, donc aucune erreur.
-Pour le prouver : `dcdiag | Select-String "ussi|chou"` → **28 tests réussis, 0 échec**.
-(Le filtre `"test"` ne suffit pas : en français, le verdict est écrit sur la ligne suivante.)
+🏢 En entreprise, on choisit un **sous-domaine d'un nom qu'on possède** : `ad.aerotrans.fr`. Ni `.local`,
+ni `home.arpa`. Renommer un domaine existant est trop lourd : on garde pour le lab, et on documente.
 
-![dcdiag](captures/65-dcdiag-28-reussis.png)
+### Étape 14 · La santé du contrôleur de domaine
 
-## 12. Organisation AEROTRANS
+⌨️
 
-**Conventions écrites d'abord** ([conventions.md](../docs/conventions.md)), puis :
+```powershell
+dcdiag /q
+dcdiag | Select-String "ussi|chou"
+```
+- `dcdiag` : le **bilan de santé** d'un DC (une trentaine de tests) ; `/q` = silencieux : n'affiche **que
+  les erreurs**. ✅ Rien ne s'affiche = **aucune erreur**.
+- Pour le **prouver** : `Select-String "ussi|chou"` garde les lignes contenant « ré**ussi** » ou
+  « é**chou**é ». ✅ **28 tests réussis, 0 échec**.
 
-- OU racine `AEROTRANS`, protégée contre la suppression (un admin du domaine lui-même ne
-  peut pas la supprimer sans décocher la protection) ;
-- 16 sous-OU en PowerShell (protection activée par défaut), avec une variable `$base` et
-  une boucle ;
-- **Corbeille AD** activée (irréversible, donc Windows demande confirmation) : un objet
-  supprimé par erreur revient avec ses groupes et attributs ;
-- **`redircmp`** → OU Ordinateurs, **`redirusr`** → OU Utilisateurs : sans ça, un nouveau PC
-  arrive dans le conteneur `Computers`, où **aucune GPO ne s'applique**.
+![dcdiag /q](captures/63-dcdiag-q-aucune-erreur.png)
+![Liste](captures/64-dcdiag-liste-tests.png)
+![28 réussis](captures/65-dcdiag-28-reussis.png)
 
+❌ Le filtre `"test"` ne suffit pas : en français, le **verdict** est écrit sur la **ligne suivante**.
+
+---
+
+## Partie 6 — L'organisation AEROTRANS dans l'annuaire
+
+### Étape 15 · Les conventions d'abord, puis les OU
+
+🎯 Avant de créer quoi que ce soit, on **écrit les règles de nommage** ([conventions.md](../docs/conventions.md)) :
+n'importe quel admin qui arrivera après doit s'y retrouver.
+
+💡 Les « dossiers » `Users` et `Computers` créés par Windows **ne sont pas des OU** : on ne peut pas y
+lier de GPO. On crée donc notre propre arborescence.
+
+![Users par défaut](captures/66-aduc-dossier-users.png)
+
+🖱️ **Outils** > **Utilisateurs et ordinateurs Active Directory** > clic droit sur `lab.home.arpa` >
+**Nouveau** > **Unité d'organisation** > `AEROTRANS`, ✅ **Protéger le conteneur contre une suppression
+accidentelle** > **OK**.
+
+💡 Avec la protection, même un admin du domaine ne peut pas supprimer l'OU sans décocher la case d'abord.
+
+![OU racine](captures/67-ou-racine-aerotrans.png)
+
+⌨️ Les 16 sous-OU en PowerShell (protection activée par défaut) :
+
+```powershell
+$base = "OU=AEROTRANS,DC=lab,DC=home,DC=arpa"
+"Utilisateurs","Ordinateurs","Serveurs","Groupes","Admins","Comptes-service","Desactives" | % { New-ADOrganizationalUnit -Name $_ -Path $base }
+"Direction","Comptabilite","RH","Commercial","Operations","Accueil","Informatique" | % { New-ADOrganizationalUnit -Name $_ -Path "OU=Utilisateurs,$base" }
+"Postes-fixes","Portables" | % { New-ADOrganizationalUnit -Name $_ -Path "OU=Ordinateurs,$base" }
+```
+- `$base = "…"` : une **variable** qui garde l'adresse de l'OU AEROTRANS, pour ne pas la retaper ;
+- chaque ligne : « pour chaque nom de la liste, crée une OU à cet endroit ».
+
+![Sous-OU Utilisateurs](captures/68a-sous-ou-utilisateurs.png)
+![Sous-OU Ordinateurs](captures/68b-sous-ou-ordinateurs.png)
 ![Arborescence](captures/69-arborescence-ou-aerotrans.png)
 
-Erreurs corrigées **avant** d'appuyer sur Entrée : variable `$base` écrasée (chemin sans
-AEROTRANS), accent, `Operation` sans « s », `Acceuil`, guillemet non fermé.
+❌ **Erreurs repérées avant d'appuyer sur Entrée** : variable `$base` écrasée (chemin sans AEROTRANS),
+un accent, `Operation` sans « s », `Acceuil`, un guillemet non fermé. 👉 **On relit une commande avant
+de la lancer**, surtout quand elle crée 16 objets.
 
-## 13. Comptes d'administration
+### Étape 16 · La corbeille AD et les redirections
+
+🖱️ **Centre d'administration Active Directory** > `lab (local)` > à droite **Activer la corbeille** >
+**OK** (Windows prévient : c'est **irréversible**).
+
+💡 Sans corbeille, un compte supprimé par erreur est perdu avec ses groupes. Avec, il **revient tel quel**.
+
+![Corbeille](captures/70-corbeille-ad-activee.png)
+
+⌨️ Les redirections :
+
+```powershell
+redircmp "OU=Ordinateurs,OU=AEROTRANS,DC=lab,DC=home,DC=arpa"
+redirusr "OU=Utilisateurs,OU=AEROTRANS,DC=lab,DC=home,DC=arpa"
+```
+💡 Sans `redircmp`, un nouveau PC joint au domaine arrive dans `Computers`, où **aucune GPO ne
+s'applique**. Avec, il arrive directement dans notre OU `Ordinateurs`. Idem pour les comptes avec `redirusr`.
+
+✅ « La redirection a réussi ».
+
+![redircmp](captures/77a-redircmp-reussi.png)
+![redirusr](captures/77b-redirusr-reussi.png)
+
+---
+
+## Partie 7 — Les comptes d'administration
+
+### Étape 17 · Créer le compte admin nominatif adm.paulo.rosa
+
+💡 **Pourquoi pas `Administrateur` au quotidien ?** Un compte = une personne (traçabilité), et le nom
+`Administrateur` est connu de **tous** les attaquants. Et pourquoi **deux** comptes pour un admin ? Si on
+clique sur un lien piégé avec un compte admin, **tout le domaine** est compromis.
 
 | Compte | Où | Groupes | Usage |
 | --- | --- | --- | --- |
@@ -209,173 +501,418 @@ AEROTRANS), accent, `Operation` sans « s », `Acceuil`, guillemet non fermé.
 | `adm.paulo.rosa` | AEROTRANS/Admins | Admins du domaine, **Protected Users** | Administration uniquement |
 | `paulo.rosa` | Utilisateurs/Informatique | GG_Informatique | Quotidien (mails, Internet), sans droit d'admin |
 
-- **Pourquoi pas `Administrateur` au quotidien ?** Traçabilité (un compte = une personne)
-  et le nom est connu de tous les attaquants.
-- **Admins du domaine** plutôt que `Builtin\Administrateurs` : ce dernier ne donne des droits
-  que sur les DC, pas sur les postes et serveurs membres.
-- **Protected Users** : pas d'identifiants gardés en mémoire sur les machines, pas de NTLM,
-  ticket Kerberos limité à 4 h.
-- **« Compte sensible, ne peut pas être délégué »** : aucun serveur ne peut emprunter l'identité de l'admin.
-- Administrateurs de l'entreprise et du schéma : **vides** (moindre privilège).
+🖱️ Utilisateurs et ordinateurs AD > `AEROTRANS` > **Admins** > clic droit > **Nouveau** > **Utilisateur** :
+prénom `Paulo`, nom `Rosa`, nom complet `Paulo Rosa (admin)`, ouverture de session `adm.paulo.rosa` >
+mot de passe (15 caractères minimum), **aucune case cochée** > **Terminer**.
 
-Test : connexion `LAB\adm.paulo.rosa`, `whoami /groups` → Admins du domaine et Protected Users actifs.
+![Création](captures/71-creation-adm-paulo-rosa.png)
+![Cases](captures/72-adm-mot-de-passe-cases.png)
+![Créé](captures/73-adm-paulo-rosa-cree.png)
+
+🖱️ Double-clic sur le compte :
+- onglet **Membre de** > **Ajouter** > `Admins du domaine` et `Protected Users` ;
+- onglet **Compte** > ✅ **Le compte est sensible et ne peut pas être délégué**.
+
+| Réglage | Effet |
+| --- | --- |
+| **Admins du domaine** (et pas `Builtin\Administrateurs`) | Droits sur **tout** le domaine, postes compris. `Builtin\Administrateurs` ne donne des droits que sur les DC |
+| **Protected Users** | Pas d'identifiants gardés en mémoire sur les machines, pas de NTLM, ticket Kerberos limité à 4 h |
+| **Compte sensible** | Aucun serveur ne peut « emprunter » l'identité de l'admin |
+
+Les groupes **Administrateurs de l'entreprise** et **Administrateurs du schéma** restent **vides**
+(moindre privilège : on y entre seulement le temps d'une opération, voir briques 04 et 05).
+
+![Membre de](captures/74-adm-membre-de.png)
+![Compte sensible](captures/75-adm-compte-sensible.png)
+
+⌨️ **Test** : déconnexion, connexion en `LAB\adm.paulo.rosa`, puis `whoami /groups`.
+✅ `LAB\Admins du domaine` et `LAB\Protected Users`, « Groupe activé ».
 
 ![whoami](captures/76-whoami-groupes-adm.png)
 
-## 14. Heure du contrôleur de domaine
+🖱️ Le compte du quotidien `paulo.rosa` est créé dans `Utilisateurs/Informatique`, sans aucun droit d'admin.
 
-Kerberos refuse toute connexion si l'horloge a **plus de 5 minutes** d'écart.
+![paulo.rosa](captures/78-compte-paulo-rosa-informatique.png)
 
-- Constat : `w32tm /query /source` → **Free-running System Clock** (aucune source).
-- Test avant réglage : `w32tm /stripchart /computer:10.10.10.254` → pfSense répond, écart **+21,5 s**
-  après 3 jours (≈ 7 s/jour : la limite Kerberos serait atteinte en 6 à 7 semaines).
-- Réglage : source = pfSense (un seul flux NTP vers Internet, celui du pare-feu).
-- Résultat : source `10.10.10.254`, couche 3, écart 21,5 s → 8 s → 2 s → quelques ms.
-  La correction est **progressive** (pas de saut d'heure) : voulu.
+---
 
-![Écart initial](captures/80-stripchart-ecart-21s.png)
+## Partie 8 — L'heure du contrôleur de domaine
+
+### Étape 18 · Synchroniser l'heure sur pfSense
+
+💡 **Kerberos refuse toute connexion si l'horloge a plus de 5 minutes d'écart.** Un DC à la mauvaise
+heure = plus personne ne se connecte.
+
+⌨️ **Constat** :
+
+```powershell
+w32tm /query /source
+w32tm /stripchart /computer:10.10.10.254 /samples:5
+```
+- `w32tm /query /source` : d'où le DC prend son heure. ❌ `Free-running System Clock` = **aucune source**,
+  il compte tout seul.
+- `/stripchart` : compare l'heure avec pfSense. ✅ pfSense répond ; écart **+21,5 s** en 3 jours
+  (≈ 7 s par jour : la limite de 5 min serait atteinte en 6 à 7 semaines).
+
+![Source avant](captures/79-w32tm-source-avant.png)
+![Écart](captures/80-stripchart-ecart-21s.png)
+
+⌨️ **Réglage** (source = pfSense, qui est le **seul** à prendre l'heure sur Internet) :
+
+```powershell
+w32tm /config /manualpeerlist:"10.10.10.254,0x8" /syncfromflags:manual /reliable:yes /update
+Restart-Service w32time
+w32tm /resync /rediscover
+w32tm /query /status
+```
+- `/manualpeerlist:"10.10.10.254,0x8"` : la source d'heure (le `0x8` = mode client) ;
+- `/syncfromflags:manual` : utiliser cette liste ; `/reliable:yes` : le DC devient la référence pour les PC ;
+- `Restart-Service w32time` puis `/resync` : appliquer et se synchroniser maintenant.
+
+✅ Source `10.10.10.254`, **strate 3**, écart 21,5 s → 8 s → 2 s → quelques millisecondes.
+💡 La correction est **progressive** (pas de saut d'heure brutal, qui perturberait les journaux) : voulu.
+
+![Config](captures/81-w32tm-config-pfsense.png)
 ![Convergence](captures/82-w32tm-status-convergence.png)
 
-## 15. Pare-feu du VLAN Serveurs en moindre privilège
+---
 
-« Serveurs → tout » remplacé par les flux strictement nécessaires
-([procédure](../docs/procedure-pare-feu.md), [matrice](../docs/matrice-des-flux.md)) :
+## Partie 9 — Le pare-feu du VLAN Serveurs au moindre privilège
 
-| # | Action | Destination | Port | Raison |
+### Étape 19 · Remplacer « Serveurs → tout » par les seuls flux utiles
+
+🎯 Un serveur compromis ne doit pouvoir joindre **que** ce dont il a besoin. Méthode complète :
+[procédure pare-feu](../docs/procedure-pare-feu.md) (sauvegarde de la configuration, photo de l'état
+initial, alias, nouvelles règles, ancienne règle **désactivée** pour pouvoir revenir en arrière, tests,
+journaux, suppression le lendemain).
+
+![Avant](captures/85-regles-serveurs-avant.png)
+
+🖱️ **Firewall > Aliases** :
+
+| Alias | Type | Contenu | Rôle |
+| --- | --- | --- | --- |
+| `PORTS_WEB` | Port(s) | `80`, `443` | Les ports du web |
+| `RESEAUX_PRIVES` | Network(s) | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | Tous les réseaux privés (RFC 1918) |
+
+![PORTS_WEB](captures/83-alias-ports-web.png)
+![RESEAUX_PRIVES](captures/84-alias-reseaux-prives.png)
+
+🖱️ **Firewall > Rules > SERVEURS** :
+
+| # | Action | Destination | Port | Pourquoi |
 | --- | --- | --- | --- | --- |
-| 1 | Bloquer | Réseau d'administration | tout | |
-| 2 | Bloquer | pfSense | TCP 443 | Interface web |
-| 3 | Autoriser | pfSense | TCP/UDP 53 | Redirecteur DNS (TCP pour les grosses réponses) |
-| 4 | Autoriser | pfSense | UDP 123 | Heure |
-| 5 | Autoriser | `! RESEAUX_PRIVES` | `PORTS_WEB` (80, 443) | Mises à jour, **Internet uniquement** |
-| 6 | Autoriser | tout | ICMP echo | Dépannage |
+| 1 | Block | Réseau d'administration | tout | |
+| 2 | Block | pfSense | TCP 443 | Interface web |
+| 3 | Pass | pfSense (SERVEURS address) | **TCP/UDP** 53 | Redirecteur DNS. TCP aussi : les grosses réponses DNS passent en TCP |
+| 4 | Pass | pfSense | UDP 123 | L'heure (NTP) |
+| 5 | Pass | **`! RESEAUX_PRIVES`** (Invert match ✅) | `PORTS_WEB` | Mises à jour, **Internet uniquement** : le `!` (inversion) interdit d'utiliser ces ports vers les autres VLAN |
+| 6 | Pass | tout | ICMP echo request | Le ping, pour le dépannage |
 
-Méthode : sauvegarde de la config, photo de l'état initial, alias, nouvelles règles,
-ancienne règle **désactivée** (retour arrière), tests, journaux, suppression le lendemain.
+![Règle DNS](captures/86-regle-a-dns.png)
+![Règle DNS corrigée](captures/86b-regle-a-dns-corrigee.png)
+![NTP](captures/87a-regle-b-ntp.png)
+![Web Internet](captures/87b-regle-c-web-internet.png)
+![Ping](captures/87c-regle-d-ping.png)
 
-**Erreur rencontrée :** premier « Apply » avec l'ancienne règle « any » encore **au-dessus** :
-les nouvelles règles restaient à 0 octet. La première règle qui correspond gagne.
+❌ **Erreur du lab** : au premier « Apply », l'ancienne règle « any » était encore **au-dessus** : les
+nouvelles règles restaient à **0 octet**. 💡 **La première règle qui correspond gagne** : tout passait par
+l'ancienne. ✅ Ancienne règle **désactivée** (pas supprimée tout de suite), puis supprimée le lendemain.
+
+![Any encore actif](captures/88a-regles-ajoutees-any-encore-actif.png)
+![Any désactivée](captures/120a-regle-any-desactivee-avant-suppression.png)
+![Règles finales](captures/120-regles-serveurs-finales.png)
+
+⌨️ **Tests** (sur SRV-AD01) : ce qui doit passer, **et** ce qui doit être bloqué :
 
 | Test | Attendu | Résultat |
 | --- | --- | --- |
 | `Resolve-DnsName google.fr` | réponse | ✅ |
-| `Test-NetConnection www.microsoft.com -Port 443` | True | ✅ |
+| `Test-NetConnection www.microsoft.com -Port 443` | `True` | ✅ |
 | `ping 1.1.1.1` | réponses | ✅ |
-| `Test-NetConnection 1.1.1.1 -Port 53` (DNS direct) | False | ✅ bloqué |
-| `Test-NetConnection 192.168.1.254 -Port 80` (réseau privé) | False | ✅ bloqué |
+| `Test-NetConnection 1.1.1.1 -Port 53` (DNS en direct, sans pfSense) | `False` | ✅ bloqué |
+| `Test-NetConnection 192.168.1.254 -Port 80` (un réseau privé) | `False` | ✅ bloqué |
 
-Les blocages apparaissent dans le journal (« Default deny rule »), avec 5 tentatives TCP
-chacune (retransmissions, d'où ~20 s par test bloqué).
+💡 `Test-NetConnection … -Port …` essaie d'ouvrir une connexion TCP : `TcpTestSucceeded : True` = ça passe.
+Un test bloqué prend ~20 s (5 tentatives TCP avant d'abandonner).
 
-![Règles finales](captures/120-regles-serveurs-finales.png)
-![Tests bloqués](captures/90-tests-flux-bloques.png)
+![Autorisés](captures/89-tests-flux-autorises.png)
+![Bloqués](captures/90-tests-flux-bloques.png)
+
+✅ Les blocages apparaissent dans **Status > System Logs > Firewall** (« Default deny rule »).
+
 ![Journal](captures/91-journal-blocages-serveurs.png)
 
-## 16. DHCP Windows et relais pfSense
+❌ Le journal de pfSense avait **2 h de décalage** : la journalisation avait démarré en UTC, avant le réglage
+du fuseau. ✅ Corrigé par un redémarrage de pfSense.
 
-Pourquoi sur Windows : le serveur doit être **autorisé dans l'AD** (protection contre un faux
-DHCP) et il inscrit les postes dans le DNS.
+![Fuseau](captures/116-pfsense-timezone.png)
+![Heure corrigée](captures/118-journal-heure-corrigee.png)
 
-1. Rôle **Serveur DHCP**, puis « Terminer la configuration DHCP » (groupes de sécurité +
-   autorisation dans l'AD).
-2. Étendue **POSTES-VLAN20** : 10.10.20.100 – .199, bail 8 jours, routeur 10.10.20.254,
-   **DNS 10.10.10.10**, domaine lab.home.arpa.
-3. pfSense : DHCP temporaire du VLAN 20 **désactivé d'abord** (le relais refuse de démarrer
-   sinon), puis **relais DHCP** sur POSTES vers 10.10.10.10.
+---
 
-Le DHCP fonctionne par broadcast, qui ne traverse pas les VLAN : le relais transmet la demande.
+## Partie 10 — Le DHCP Windows et le relais pfSense
 
-Test depuis `test-poste` (redémarrée pour partir sans ancien bail) :
+### Étape 20 · Installer et autoriser le DHCP
+
+💡 **Pourquoi le DHCP sur Windows plutôt que sur pfSense ?** Le serveur DHCP doit être **autorisé dans
+l'AD** (protection contre un faux serveur DHCP branché par quelqu'un), et il **inscrit les postes dans le
+DNS** du domaine.
+
+🖱️ **Ajouter des rôles** > ✅ **Serveur DHCP** > Installer. Puis drapeau ⚠️ > **Terminer la configuration
+DHCP** > **Valider** (crée les groupes de sécurité et **autorise** le serveur dans l'AD).
+
+![Rôle DHCP](captures/92-role-dhcp-coche.png)
+![Installation](captures/93-installation-dhcp.png)
+![Post-déploiement](captures/93b-post-deploiement-a-faire.png)
+![Terminé](captures/93c-post-deploiement-termine.png)
+
+### Étape 21 · L'étendue du VLAN Postes
+
+🖱️ **Outils** > **DHCP** > `srv-ad01` > **IPv4** > clic droit > **Nouvelle étendue** :
+
+| Écran | Valeur | Pourquoi |
+| --- | --- | --- |
+| Nom | `POSTES-VLAN20` | |
+| Plage | `10.10.20.100` à `10.10.20.199`, masque /24 | `.1` à `.99` gardées pour les adresses fixes |
+| Durée du bail | **8 jours** | Un PC de bureau garde son adresse longtemps |
+| Routeur | `10.10.20.254` | pfSense, la passerelle du VLAN |
+| Serveur DNS | `10.10.10.10` | ⭐ Le DC : sinon les PC ne trouveraient pas le domaine |
+| Domaine | `lab.home.arpa` | |
+| Activer l'étendue | Oui | |
+
+![Options](captures/94-options-etendue.png)
+![Active](captures/94a-etendue-active.png)
+![Pool](captures/95-pool-adresses.png)
+
+### Étape 22 · Le relais DHCP sur pfSense
+
+💡 Une demande DHCP est un **cri dans la pièce** (broadcast) : elle ne sort pas de son VLAN. Le serveur est
+dans le VLAN 10, les postes dans le VLAN 20. Le **relais** (pfSense) entend le cri et le **transmet** au serveur.
+
+🖱️ pfSense, **dans cet ordre** :
+1. **Services > DHCP Server > POSTES** : ❌ décocher **Enable** (le DHCP temporaire de la brique 01) >
+   **Save**. Sinon le relais refuse de démarrer.
+2. **Services > DHCP Relay** : ✅ Enable, interface **POSTES**, serveur **`10.10.10.10`** > **Save**.
+
+![DHCP pfSense désactivé](captures/96-pfsense-dhcp-poste-desactive.png)
+![Relais](captures/97-pfsense-relais-dhcp.png)
+
+⌨️ **Test** depuis la VM de test du VLAN 20 (redémarrée pour partir sans ancien bail) : `udhcpc`
 
 ```
 udhcpc: broadcasting discover
 udhcpc: broadcasting select for 10.10.20.100, server 10.10.10.10
 udhcpc: lease of 10.10.20.100 obtained from 10.10.10.10, lease time 691200
 ```
+✅ Le bail vient bien de **10.10.10.10** (Windows), pour 691 200 s = **8 jours**. Il apparaît dans la
+console DHCP (**Baux d'adresses**).
 
-691 200 s = 8 jours. Le bail apparaît dans la console DHCP.
+❌ **Erreur du lab** : une faute de frappe dans la commande (`udhcp` au lieu de `udhcpc`).
 
-![Options d'étendue](captures/94-options-etendue.png)
-![Relais](captures/97-pfsense-relais-dhcp.png)
+![Faute de frappe](captures/98a-udhcp-faute-de-frappe.png)
 ![Bail obtenu](captures/98-udhcpc-bail-obtenu.png)
+![Baux](captures/99-baux-dhcp.png)
 
-**Observation honnête :** j'avais prédit un blocage de la réponse du serveur par les nouvelles
-règles. Il n'a pas eu lieu. pfSense crée des règles **automatiques** quand le relais est actif
-(trouvées dans `/tmp/rules.debug`, ligne « allow access to DHCP relay »), ce qui explique
-l'aller ; le retour reste à confirmer par une capture de paquets.
+💡 **Observation honnête** : on s'attendait à ce que les nouvelles règles du VLAN Serveurs bloquent la
+réponse du serveur. Ça n'a pas été le cas : pfSense crée des **règles automatiques** quand le relais est
+actif (trouvées dans `/tmp/rules.debug`, ligne « allow access to DHCP relay »). Le retour reste à
+confirmer par une capture de paquets.
 
 ![Règles automatiques](captures/119-regles-automatiques-relais.png)
 
-Effet de bord de `redirusr` : les groupes « Administrateurs DHCP » et « Utilisateurs DHCP »
-sont arrivés dans AEROTRANS/Utilisateurs ; déplacés dans Groupes.
+❌ **Effet de bord de `redirusr`** : les groupes « Administrateurs DHCP » et « Utilisateurs DHCP » sont
+arrivés dans `AEROTRANS/Utilisateurs`. ✅ Déplacés dans `Groupes`.
 
-## 17. Groupes et import des salariés
+![Groupes DHCP mal rangés](captures/103c-groupes-dhcp-dans-utilisateurs.png)
+![Déplacés](captures/105-groupes-dhcp-deplaces.png)
 
-- 7 groupes `GG_<Service>` (globaux, sécurité, avec description) à l'interface.
-- 24 salariés depuis un **CSV** (comme un fichier envoyé par les RH) avec le script
-  [`Import-AerotransUsers.ps1`](scripts/Import-AerotransUsers.ps1) : identifiant
-  `prenom.nom` sans accent, bonne OU, bon groupe, mot de passe provisoire à changer à la
-  première connexion. Script relançable sans risque (un compte existant est ignoré).
-- Apport des fichiers dans la VM par une **ISO** (pas de copier-coller dans la console Proxmox).
-- **Simulation d'abord** (`-WhatIf`) : 24 à créer, 0 erreur.
+---
 
-**Incident :** première exécution avec un mot de passe vide → 24 comptes créés **désactivés,
-sans mot de passe ni groupe** ; à la relance, le script les a ignorés (« déjà présents »).
+## Partie 11 — Les groupes et les salariés
+
+### Étape 23 · Les groupes par service
+
+🖱️ OU **Groupes** > clic droit > **Nouveau** > **Groupe**, 7 fois : `GG_Direction`, `GG_Comptabilite`,
+`GG_RH`, `GG_Commercial`, `GG_Operations`, `GG_Accueil`, `GG_Informatique` ; étendue **Globale**, type
+**Sécurité**, avec une **description**.
+
+💡 **GG** = groupe **global** : il contient des **comptes**. Plus tard, on donnera les droits à des groupes
+**domaine local** (`DL_…`) qui contiendront les `GG_` : c'est la méthode **AGDLP** (voir conventions).
+
+![Groupes](captures/100-groupes-gg.png)
+![Membres GG_Informatique](captures/100b-gg-informatique-membres.png)
+
+### Étape 24 · Importer 24 salariés depuis un fichier CSV
+
+🎯 Comme en vrai : les RH envoient un **fichier** avec les nouveaux salariés ; on ne crée pas 24 comptes à
+la main. Le script [`Import-AerotransUsers.ps1`](scripts/Import-AerotransUsers.ps1) lit
+[`aerotrans-salaries.csv`](scripts/aerotrans-salaries.csv) et, pour chaque ligne : identifiant
+`prenom.nom` sans accent, la bonne OU, le bon groupe, un mot de passe **provisoire** à changer à la
+première connexion. Il est **relançable** sans risque (un compte existant est ignoré).
+
+🖱️ **Apporter les fichiers dans la VM** : pas de copier-coller dans la console Proxmox. On fabrique une
+petite **ISO** contenant les fichiers, on la téléverse dans Proxmox et on l'insère dans le lecteur CD de
+SRV-AD01 (elle apparaît en `E:`).
+
+![ISO](captures/101a-upload-iso-proxmox.png)
+![Insérée](captures/101-iso-insere-vm200.png)
+![Lecteur E:](captures/101b-lecteur-e-aerotrans.png)
+
+⌨️ **Simulation d'abord** (rien n'est créé, le script dit ce qu'il **ferait**) :
+
+```powershell
+.\Import-AerotransUsers.ps1 -CsvPath .\aerotrans-salaries.csv -Simulation
+```
+✅ 24 comptes à créer, 0 erreur.
+
+![Simulation](captures/102-script-simulation.png)
+
+❌ **Incident** : 1re exécution réelle avec un mot de passe provisoire **vide** → **24 erreurs**, et 24 comptes
+créés **désactivés, sans mot de passe ni groupe**. À la relance, le script les a **ignorés** (« déjà présents »).
+
+![24 erreurs](captures/103a-script-mdp-vide-24-erreurs.png)
+![Déjà présents](captures/103b-script-relance-deja-presents.png)
+![Comptes cassés](captures/103d-comptes-operations-casses.png)
+![Liste](captures/104-liste-comptes-casses.png)
+
+✅ **Correction propre** :
 
 | Étape | Action |
 | --- | --- |
 | Constat | `Get-ADUser -Filter "Company -eq 'AEROTRANS'"` → 24 comptes, `Enabled = False` |
-| Ciblage | Seuls les comptes marqués « AEROTRANS » par le script (le compte `paulo.rosa` n'est pas touché) |
-| Correction | Suppression (ils passent par la corbeille AD), relance avec un mot de passe conforme |
+| Ciblage | **Seuls** les comptes marqués « AEROTRANS » par le script (le compte `paulo.rosa` n'est pas touché) |
+| Correction | Suppression (ils passent par la **corbeille AD**), relance avec un mot de passe conforme |
 | Contrôle | 24 comptes `Enabled = True`, `GG_Operations` = 14 membres |
-| Prévention | Script v2 : supprime un compte créé à moitié et **s'arrête** au premier mot de passe refusé |
+| Prévention | **Script v2** : supprime un compte créé à moitié et **s'arrête** au premier mot de passe refusé |
 
-La simulation ne pouvait pas détecter ce problème : elle ne teste pas le mot de passe.
+![24 créés](captures/106-script-24-crees.png)
+![Activés](captures/107a-comptes-actives.png)
+![14 dans Operations](captures/107b-gg-operations-14.png)
 
-![Simulation](captures/102-script-simulation.png)
-![Erreurs](captures/103a-script-mdp-vide-24-erreurs.png)
-![Import réussi](captures/106-script-24-crees.png)
+💡 **Leçon** : la simulation ne pouvait pas détecter ce problème (elle ne teste pas le mot de passe). Un
+script doit **s'arrêter** à la première erreur grave plutôt que de continuer à moitié.
 
-## 18. Politique de mots de passe
+---
 
-**Domaine** (Default Domain Policy, la seule modification faite dans cette GPO) :
+## Partie 12 — Les mots de passe et la première GPO
 
-| Paramètre | Valeur |
-| --- | --- |
-| Longueur minimale | 12 (7 par défaut) |
-| Complexité | activée |
-| Historique | 24 |
-| Durée de vie | 1 à 365 jours |
-| Verrouillage | 10 essais, 15 min, compteur 15 min |
+### Étape 25 · La politique de mot de passe du domaine
 
-365 jours : il n'y a pas de consensus. Les recommandations récentes déconseillent le
-renouvellement forcé d'un mot de passe long, surtout avec double authentification ; sans
-elle, beaucoup de PME gardent un renouvellement annuel.
+🖱️ **Gestion des stratégies de groupe** > `lab.home.arpa` > clic droit sur **Default Domain Policy** >
+**Modifier** > Configuration ordinateur > Stratégies > Paramètres Windows > Paramètres de sécurité >
+**Stratégies de comptes** :
 
-**Admins** : stratégie affinée **PSO-Admins** (15 caractères, 180 jours), appliquée à
-« Admins du domaine ». Vérification avec `Get-ADUserResultantPasswordPolicy` : `adm.paulo.rosa`
-→ PSO-Admins ; `paulo.rosa` → rien (politique du domaine).
+| Paramètre | Valeur | Défaut |
+| --- | --- | --- |
+| Longueur minimale | **12** | 7 |
+| Complexité | Activée | |
+| Historique | 24 | |
+| Durée de vie | 1 à 365 jours | |
+| Verrouillage | 10 essais, 15 min, compteur 15 min | |
 
-![Politique appliquée](captures/110-politique-mdp-appliquee.png)
-![PSO-Admins](captures/113-resultant-password-policy.png)
+💡 C'est **la seule** modification faite dans la Default Domain Policy (les autres réglages vont dans nos
+propres GPO). **365 jours** : il n'y a pas de consensus. Les recommandations récentes déconseillent de
+forcer le changement d'un mot de passe long (surtout avec double authentification) ; beaucoup de PME
+gardent un renouvellement annuel.
 
-## 19. Première GPO : verrouillage après inactivité
+![Mots de passe](captures/108-strategie-mot-de-passe.png)
+![Verrouillage](captures/109-strategie-verrouillage.png)
+![Appliquée](captures/110-politique-mdp-appliquee.png)
 
-`C_Securite_Verrouillage_Inactivite` : Configuration ordinateur → Options de sécurité →
-« Ouverture de session interactive : **limite d'inactivité** de l'ordinateur » = **600 s**.
+### Étape 26 · Une règle plus stricte pour les admins (PSO-Admins)
 
-- Créée dans « Objets de stratégie de groupe », configurée, **puis** liée (jamais à moitié prête).
-- Liée à **AEROTRANS/Ordinateurs** : un paramètre de *configuration ordinateur* ne s'applique
-  qu'aux objets ordinateurs. Liée à une OU d'utilisateurs, elle ne ferait **rien**, sans erreur.
-- Héritée par Postes-fixes et Portables.
-- Piège évité : « seuil de verrouillage du **compte d'ordinateur** » (en *tentatives*) ouvert
-  par erreur. Vérifier l'**unité** et l'onglet **Expliquer** avant de valider.
-- Test réel avec le premier poste Windows 11 (brique 04).
+💡 Une **FGPP** (stratégie de mot de passe affinée) s'applique à un **groupe** et remplace celle du domaine.
 
-![GPO](captures/114-limite-inactivite-600s.png)
-![GPO liée](captures/115-gpo-liee-ordinateurs.png)
+🖱️ **Centre d'administration AD** > `lab (local)` > **System** > **Password Settings Container** >
+**Nouveau** > **Paramètres de mot de passe** : nom `PSO-Admins`, priorité `10`, longueur **15**, complexité,
+historique 24, durée 1 à **180** jours, verrouillage 10 / 15 / 15 min, ✅ protection contre la suppression ;
+**S'applique à** : `Admins du domaine`.
 
-## 20. Équivalents PowerShell
+![PSO-Admins](captures/112-pso-admins-description.png)
+![Cible](captures/112a-pso-admins-cible.png)
+
+⌨️ **Vérification** :
+
+```powershell
+Get-ADUserResultantPasswordPolicy adm.paulo.rosa
+Get-ADUserResultantPasswordPolicy paulo.rosa
+```
+✅ `adm.paulo.rosa` → **PSO-Admins** ; `paulo.rosa` → rien (donc la politique du domaine).
+
+![Politique résultante](captures/113-resultant-password-policy.png)
+
+### Étape 27 · La première GPO : verrouiller la session après 10 minutes
+
+🎯 Un PC laissé ouvert à l'accueil se **verrouille tout seul**.
+
+🖱️ **Gestion des stratégies de groupe** > `lab.home.arpa` > **Objets de stratégie de groupe** > clic
+droit > **Nouveau** > `C_Securite_Verrouillage_Inactivite`.
+
+💡 On la **crée d'abord sans la lier** (dans « Objets de stratégie de groupe ») : on la configure, **puis**
+on la lie. Jamais une GPO à moitié prête appliquée aux PC.
+
+![Créée non liée](captures/115a-gpo-creee-non-liee.png)
+
+🖱️ Clic droit > **Modifier** > Configuration ordinateur > Stratégies > Paramètres Windows > Paramètres de
+sécurité > Stratégies locales > **Options de sécurité** > « **Ouverture de session interactive : limite
+d'inactivité de l'ordinateur** » > ✅ Définir > **600** secondes.
+
+❌ **Piège évité** : le paramètre voisin « seuil de verrouillage du **compte d'ordinateur** » (en
+**tentatives**, pas en secondes) avait été ouvert par erreur. 👉 Vérifier l'**unité** et lire l'onglet
+**Expliquer** avant de valider.
+
+![Mauvais paramètre](captures/114a-mauvais-parametre-seuil-compte.png)
+![600 s](captures/114-limite-inactivite-600s.png)
+![Défini](captures/114b-gpo-parametre-defini.png)
+
+🖱️ Clic droit sur l'OU **AEROTRANS/Ordinateurs** > **Lier un objet de stratégie de groupe existant** >
+`C_Securite_Verrouillage_Inactivite`.
+
+💡 Liée à **Ordinateurs** parce que c'est un paramètre de **configuration ordinateur** : il ne s'applique
+qu'aux objets **ordinateurs**. Liée à une OU d'utilisateurs, elle ne ferait **rien**, sans aucune erreur.
+Elle est **héritée** par Postes-fixes et Portables. Test réel sur un poste Windows 11 : brique 04.
+
+![Lier](captures/115b-lier-gpo.png)
+![Liée](captures/115-gpo-liee-ordinateurs.png)
+
+### Étape 28 · Les alertes rouges du Gestionnaire de serveur
+
+❌ Deux alertes rouges « Services » : `spice-agent` (inutile sans affichage SPICE) et `InventorySvc` (qui
+s'arrête tout seul après sa tâche) sont en démarrage **automatique**. ✅ Passés en **manuel** : tableau de bord vert.
+
+![Alertes](captures/111a-alertes-services-rouge.png)
+![Détail](captures/111b-services-arretes-detail.png)
+![spice-agent](captures/111c-spice-agent-manuel.png)
+![InventorySvc](captures/111d-inventorysvc-manuel.png)
+![Tout vert](captures/111-tableau-de-bord-vert.png)
+
+🖱️ Fin : ISO éjectées du lecteur de la VM.
+
+![ISO éjectées](captures/121-iso-ejectees-vm200.png)
+
+---
+
+## Annexes
+
+### A. Dépannages rencontrés
+
+| Symptôme | Cause | Solution |
+| --- | --- | --- |
+| Aucun disque à l'installation | Pilote VirtIO SCSI absent | `vioscsi\2k25\amd64` |
+| Adresse 169.254.x.x | Pas de DHCP dans le VLAN 10 | IP fixe |
+| Ping 100 % perte vers pfSense | Refus par défaut, aucune règle | Règles du VLAN Serveurs |
+| Ping OK mais « pas d'Internet » | DNS = lui-même, rôle DNS pas installé | DNS temporaire pfSense |
+| SRV introuvable | Faute de frappe `_mcdcs` | `_msdcs` |
+| `lab.home.arpa` dans les zones inversées | Windows classe tout `.arpa` en inversé | Sans effet ; en entreprise `ad.entreprise.fr` |
+| `dcdiag \| Select-String "test"` sans verdict | Verdict sur la ligne suivante en français | Filtre `"ussi\|chou"` |
+| Nouvelles règles à 0 octet | Règle « any » encore au-dessus | Ordre des règles, désactivation |
+| 24 comptes désactivés | Mot de passe provisoire vide | Suppression ciblée, relance, script v2 |
+| Groupes DHCP dans Utilisateurs | Effet de `redirusr` | Déplacés dans Groupes |
+| Journal pfSense décalé de 2 h | Journalisation démarrée en UTC | Redémarrage de pfSense |
+| 2 alertes rouges « Services » | Services en automatique qui s'arrêtent seuls | Démarrage manuel |
+
+### B. Équivalents PowerShell
 
 ```powershell
 # Réseau et nom
@@ -384,7 +921,6 @@ New-NetIPAddress -InterfaceAlias Ethernet -IPAddress 10.10.10.10 -PrefixLength 2
 Set-DnsClientServerAddress -InterfaceAlias Ethernet -ServerAddresses 10.10.10.10
 
 # Rôle et promotion (le mot de passe DSRM est demandé, jamais écrit dans le script)
-# Valeurs acceptées pour les niveaux : Get-Help Install-ADDSForest -Parameter ForestMode
 Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
 Install-ADDSForest -DomainName lab.home.arpa -DomainNetbiosName LAB `
   -ForestMode Win2025 -DomainMode Win2025 -InstallDns `
@@ -437,75 +973,58 @@ New-ADFineGrainedPasswordPolicy -Name PSO-Admins -Precedence 10 -MinPasswordLeng
   -LockoutThreshold 10 -LockoutDuration 00:15:00 -LockoutObservationWindow 00:15:00 -ProtectedFromAccidentalDeletion $true
 Add-ADFineGrainedPasswordPolicySubject PSO-Admins -Subjects "Admins du domaine"
 
-# GPO (le paramètre « limite d'inactivité » correspond à la valeur de registre InactivityTimeoutSecs)
+# GPO (le paramètre « limite d'inactivité » = la valeur de registre InactivityTimeoutSecs)
 New-GPO -Name C_Securite_Verrouillage_Inactivite
 Set-GPRegistryValue -Name C_Securite_Verrouillage_Inactivite -Key "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" `
   -ValueName InactivityTimeoutSecs -Type DWord -Value 600
 New-GPLink -Name C_Securite_Verrouillage_Inactivite -Target "OU=Ordinateurs,$base"
 ```
 
-## 21. Dépannages rencontrés
+### C. Écarts entre le lab et l'entreprise
 
-| Symptôme | Cause | Solution |
-| --- | --- | --- |
-| Aucun disque à l'installation | Pilote VirtIO SCSI absent | `vioscsi\2k25\amd64` |
-| Adresse 169.254.x.x | Pas de DHCP dans le VLAN 10 | IP fixe |
-| Ping OK mais « pas d'Internet » | DNS = lui-même, rôle DNS pas encore installé | DNS temporaire pfSense |
-| Enregistrement SRV introuvable | Faute de frappe `_mcdcs` | `_msdcs` |
-| `lab.home.arpa` dans les zones inversées | Windows classe tout `.arpa` en inversé | Sans effet ; en entreprise `ad.entreprise.fr` |
-| `dcdiag \| Select-String "test"` sans verdict | Verdict sur la ligne suivante en français | Filtre `"ussi\|chou"` |
-| Nouvelles règles à 0 octet | Règle « any » encore au-dessus | Ordre des règles, désactivation |
-| 24 comptes désactivés | Mot de passe provisoire vide | Suppression ciblée, relance, script v2 |
-| Journal pfSense décalé de 2 h | Journalisation démarrée en UTC avant le réglage du fuseau | Redémarrage de pfSense |
-| 2 alertes rouges « Services » | `spice-agent` (sans affichage SPICE) et `InventorySvc` (s'arrête après sa tâche) en automatique | Démarrage manuel |
-
-## 22. Écarts lab / entreprise
-
-| Lab | Entreprise | Pourquoi l'écart |
+| Dans le lab | En entreprise | Pourquoi l'écart |
 | --- | --- | --- |
 | Domaine `lab.home.arpa` | `ad.entreprise.fr` | Choix fait avant de connaître le piège `.arpa` ; renommer un domaine est lourd |
 | **Un seul** contrôleur de domaine | **Au moins deux** | Si l'unique DC tombe, plus personne ne se connecte. SRV-AD02 prévu |
-| DHCP sur un seul serveur | Basculement (failover) entre 2 serveurs | Même raison |
+| DHCP sur un seul serveur | Basculement (failover) entre deux serveurs | Même raison |
+| Instantané avant la promotion | Sauvegarde de l'état système | Un seul DC |
 | Administration depuis la console Proxmox | Bureau à distance depuis le VLAN d'administration | Attend le switch (brique 02) |
 | Mot de passe provisoire commun | Unique par salarié, remis en main propre | Simplification du lab |
-| Interface graphique | Installation Core pour réduire la surface d'attaque | Apprentissage |
+| Interface graphique | Installation Core | Apprentissage |
 | Licence d'évaluation | Licence Standard + licences d'accès client (CAL) | Lab |
 
-## 23. Utilisation en entreprise : 3 cas concrets
+### D. Utilisation en entreprise : 3 cas concrets
 
-1. **Arrivée d'un salarié** : une ligne dans le CSV, le script crée le compte au bon endroit,
-   dans le bon groupe ; le salarié change son mot de passe à sa première connexion.
-2. **Départ d'un salarié** : compte désactivé et déplacé dans `Desactives` le jour même ;
-   suppression après quelques mois. En cas d'erreur, la corbeille AD le restaure.
-3. **Un serveur est compromis** : il ne peut joindre ni le réseau d'administration, ni un DNS
-   extérieur, ni les autres VLAN ; ses tentatives apparaissent dans les journaux du pare-feu.
+1. **Arrivée d'un salarié** : une ligne dans le CSV, le script crée le compte au bon endroit, dans le bon
+   groupe ; le salarié change son mot de passe à sa première connexion.
+2. **Départ d'un salarié** : compte désactivé et déplacé dans `Desactives` le jour même ; suppression
+   après quelques mois. En cas d'erreur, la corbeille AD le restaure.
+3. **Un serveur est compromis** : il ne peut joindre ni le réseau d'administration, ni un DNS extérieur,
+   ni les autres VLAN ; ses tentatives apparaissent dans les journaux du pare-feu.
 
-## 24. Questions d'entretien
+### E. Questions d'entretien (avec la réponse)
 
-- **Différence entre une OU et un groupe ?** L'OU range les objets et reçoit les GPO ; le
-  groupe sert à donner des droits.
-- **Pourquoi le DNS du DC pointe-t-il vers lui-même ?** C'est lui qui connaît la zone du
-  domaine et les enregistrements SRV qui permettent aux postes de trouver un DC.
+- **Différence entre une OU et un groupe ?** L'OU **range** les objets et reçoit les GPO ; le groupe sert à
+  **donner des droits**.
+- **Pourquoi le DNS du DC pointe-t-il vers lui-même ?** C'est lui qui connaît la zone du domaine et les
+  enregistrements SRV qui permettent aux postes de trouver un DC.
 - **À quoi sert une zone inversée ?** IP → nom : journaux lisibles, certains outils l'exigent.
 - **Pourquoi l'heure est-elle critique dans un domaine ?** Kerberos refuse plus de 5 minutes d'écart.
-- **Pourquoi deux comptes par admin ?** Un clic sur un lien piégé avec un compte admin
-  compromet tout le domaine.
+- **Pourquoi deux comptes par admin ?** Un clic sur un lien piégé avec un compte admin compromet tout le domaine.
 - **Que fait Protected Users ?** Pas d'identifiants en mémoire, pas de NTLM, ticket de 4 h.
-- **Pourquoi ne pas restaurer un instantané de DC ?** *USN rollback* : l'annuaire se
-  désynchronise des autres DC.
-- **Une GPO ne s'applique pas, que vérifies-tu ?** Liée à la bonne OU (ordinateur ou
-  utilisateur selon la partie configurée), objet bien dans l'OU (pas dans `Computers`),
-  filtrage de sécurité, puis `gpresult /r` et `gpupdate /force`.
-- **Qu'est-ce qu'une FGPP ?** Une politique de mot de passe appliquée à un groupe, qui
-  remplace celle du domaine (ici : 15 caractères pour les admins).
+- **Pourquoi ne pas restaurer un instantané de DC ?** *USN rollback* : l'annuaire se désynchronise des autres DC.
+- **Une GPO ne s'applique pas, que vérifies-tu ?** Liée à la bonne OU (ordinateur ou utilisateur selon la
+  partie configurée), objet bien dans l'OU (pas dans `Computers`), filtrage de sécurité, puis `gpresult /r`
+  et `gpupdate /force`.
+- **Qu'est-ce qu'une FGPP ?** Une politique de mot de passe appliquée à un groupe, qui remplace celle du domaine.
 - **Pourquoi un relais DHCP ?** La demande DHCP est un broadcast qui ne sort pas de son VLAN.
+- **À quoi sert la corbeille AD ?** Restaurer un objet supprimé avec tous ses attributs et groupes.
 
-## 25. Points en suspens
+### F. Points en suspens
 
 - 2e contrôleur de domaine (SRV-AD02) et basculement DHCP.
 - Étendues DHCP des VLAN Wi-Fi (30, 40).
-- Règles précises du VLAN Postes (ports AD) avec la brique 04.
-- ~~Test de la GPO de verrouillage sur un poste Windows 11~~ : fait en brique 04 (verrouillage à 10 min pile, après neutralisation de l'extinction d'écran).
-- Confirmer le retour du relais DHCP par capture de paquets.
+- Règles précises du VLAN Postes (ports AD) : en cours (voir [matrice des flux](../docs/matrice-des-flux.md)).
+- Confirmer le retour du relais DHCP par une capture de paquets.
 - Compte dédié pour les mises à jour DNS du serveur DHCP (`Set-DhcpServerDnsCredential`).
 - Mot de passe du compte `Administrateur` dans un gestionnaire de mots de passe.

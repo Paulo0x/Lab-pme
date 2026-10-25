@@ -4,7 +4,7 @@
 > nouvel admin demande en premier. Chaque règle du pare-feu doit y figurer, avec sa raison.
 > Tout flux absent de ce tableau est **refusé** (refus par défaut de pfSense) et journalisé.
 
-Mise à jour : 15 oct. 2026 (brique 04).
+Mise à jour : 25 oct. 2026 (brique 05 : GLPI → AD en LDAPS 636).
 
 ## 1. Flux en place
 
@@ -21,7 +21,7 @@ Mise à jour : 15 oct. 2026 (brique 04).
 | 7 | Autoriser | **SRV-AD01** (10.10.10.10) | Postes (VLAN 20) | TCP 135 + TCP 49152-65535 (RPC / WMI) | Administration à distance des postes depuis le serveur : vérifier les GPO appliquées (Résultats de stratégie de groupe), journaux. Limité au seul DC, pas à tout le VLAN Serveurs. Ajouté le 15 oct. 2026, en place le 21 oct. (alias `PORTS_RPC_WMI`). Côté poste, le pare-feu Windows est ouvert par la GPO `C_Securite_PareFeu_Administration` (WMI, source 10.10.10.10, profil Domaine) | non |
 | — | **Refuser** | tout le reste | | | Refus par défaut | oui |
 
-Alias utilisés : `PORTS_WEB` = 80, 443 ; `PORTS_RPC_WMI` = 135, 49152:65535 ; `RESEAUX_PRIVES` = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 (RFC 1918).
+Alias utilisés : `PORTS_WEB` = 80, 443 ; `SRV_GLPI` = 10.10.10.20 ; `PORTS_RPC_WMI` = 135, 49152:65535 ; `RESEAUX_PRIVES` = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 (RFC 1918).
 
 ### VLAN 20 · Postes (interface POSTES)
 
@@ -29,7 +29,8 @@ Alias utilisés : `PORTS_WEB` = 80, 443 ; `PORTS_RPC_WMI` = 135, 49152:65535 ; `
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Bloquer | Postes | Réseau d'administration (VLAN 99) | tout | Un poste ne touche jamais aux équipements | oui |
 | 2 | Bloquer | Postes | pfSense (This Firewall) | TCP 443 | Pas d'accès à l'interface du pare-feu par la passerelle | oui |
-| 3 | Autoriser | Postes | tout | tout | **Provisoire** : à remplacer par des règles précises à la brique 04 (voir § 2) | non |
+| 3 | Autoriser | Postes | **SRV-GLPI** (alias `SRV_GLPI`, 10.10.10.20) | TCP 443 | Interface web GLPI en HTTPS (tickets, inventaire) et remontée de l'agent GLPI. Ajoutée le 24 oct. 2026 (brique 05), placée avant la règle provisoire pour qu'elle reste valable quand celle-ci sera supprimée | non |
+| 4 | Autoriser | Postes | tout | tout | **Provisoire** : à remplacer petit à petit par des règles précises (voir § 2). La règle 3 (GLPI) est la première | non |
 | auto | Autoriser | Postes (0.0.0.0:68) | 255.255.255.255:67 | UDP | Règle **automatique** créée par pfSense quand le relais DHCP est activé | — |
 
 ### WAN (réseau de la box)
@@ -50,6 +51,10 @@ Alias utilisés : `PORTS_WEB` = 80, 443 ; `PORTS_RPC_WMI` = 135, 49152:65535 ; `
 
 | Brique | Source | Destination | Ports | Pourquoi |
 | --- | --- | --- | --- | --- |
+| 05 | SRV-GLPI | SRV-AD01 | TCP 636 (LDAPS) uniquement depuis le 25 oct. 2026 (le 389 n'est plus utilisé : Windows Server 2025 refuse le bind simple non signé) | Authentification des salariés avec leur compte du domaine. **Même VLAN : pas filtré par pfSense**, documenté pour la traçabilité |
+| 05 | SRV-GLPI | SRV-AD01 | TCP/UDP 53 | DNS (même VLAN, non filtré) |
+| 05 | SRV-GLPI | Internet | TCP 80, 443 | Mises à jour Debian et GLPI : **déjà couvert** par la règle 5 du VLAN Serveurs (`PORTS_WEB` vers `! RESEAUX_PRIVES`) |
+| 05 | SRV-GLPI | pfSense | UDP 123 | Heure (NTP) : **déjà couvert** par la règle 4 du VLAN Serveurs |
 | 02 | Administration (VLAN 99) | SRV-AD01 | TCP 3389 | Bureau à distance des admins (copier-coller, confort) |
 | 02 | Administration (VLAN 99) | pfSense, Proxmox | TCP 443, 8006 | Administration par le bon réseau, puis suppression de la règle WAN temporaire |
 | 04 | Postes | SRV-AD01 | DNS 53, Kerberos 88, NTP 123, RPC 135, LDAP 389, SMB 445, Kerberos mdp 464, LDAPS 636, catalogue global 3268-3269, RPC dynamiques 49152-65535 | Ports nécessaires à un poste membre du domaine ; remplaceront la règle 3 « Postes → tout » |

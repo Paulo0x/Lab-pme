@@ -1,30 +1,81 @@
 # Brique 04 — Postes de travail Windows 11, GPO et LAPS
 
-> Procédure d'intervention rédigée comme chez un client : chaque étape indique
-> **quoi faire**, **pourquoi**, **comment vérifier** et **quoi faire si ça échoue**.
-> Les étapes ont été faites à l'interface graphique ; la commande PowerShell équivalente
-> est donnée à la fin (section 18). Les erreurs commises pendant le lab sont laissées
-> volontairement, avec leur correction : ce sont elles qui apprennent le plus.
+> **Tuto pas à pas, écrit pour quelqu'un qui débute.** Chaque étape dit **pourquoi** on la fait,
+> **où cliquer** ou **quoi taper**, **ce qu'on doit voir**, et **quoi faire si ça ne marche pas**.
+> Les étapes sont faites à l'interface graphique ; les commandes PowerShell équivalentes sont en
+> annexe B. Les erreurs faites pendant le lab sont laissées volontairement, avec leur correction.
+> Les captures sont dans le dossier [`captures/`](captures/).
 
-## 1. Besoin du client
+## Comment lire ce tuto
 
-AEROTRANS (25 salariés) veut des postes de travail :
+| Repère | Sens |
+| --- | --- |
+| 🎯 | **Le but** de l'étape |
+| 🖱️ | Ce qu'on fait **à la souris** (menus, boutons, cases) |
+| ⌨️ | Ce qu'on **tape**, avec l'explication |
+| ✅ | Ce qu'on **doit voir** si tout va bien |
+| ❌ | **Si ça ne marche pas** (souvent : l'erreur qu'on a vraiment eue) |
+| 🏢 | **En entreprise**, quand on ferait autrement |
+| 💡 | Une explication pour bien comprendre |
 
-- **intégrés au domaine** : un salarié se connecte avec son compte, sur n'importe quel PC ;
-- qui **appliquent tout seuls** les règles de l'entreprise (verrouillage de l'écran, alimentation) ;
+---
+
+## Résumé pour les pressés
+
+- **PC-001** (Windows 11 Entreprise 25H2, VM 300, VLAN 20, DHCP via relais) **renommé avant d'être
+  joint** au domaine, rangé dans `Postes-fixes`, 1re connexion d'une salariée sans droits d'admin.
+- **GPO testées pour de vrai** : verrouillage après 10 min (prouvé au chrono, après neutralisation de
+  l'extinction d'écran), alimentation des postes fixes (jamais de veille).
+- **Administration à distance** (RSOP depuis le serveur) : diagnostic de **deux pare-feu** (pfSense
+  puis Windows), ouverture **limitée à SRV-AD01** et au **profil Domaine** (défense en profondeur).
+- **Durcissement AD** : `ms-DS-MachineAccountQuota` à 0 + **délégation** de la jonction au moindre
+  privilège (AGDLP), compte local d'installation désactivé.
+- **Windows LAPS** : extension du schéma en **juste à temps**, mot de passe local unique, chiffré, changé
+  tous les 30 jours, compte `secours.local` géré automatiquement.
+
+### Les GPO en place à la fin de la brique
+
+| GPO | Liée à | Rôle |
+| --- | --- | --- |
+| `C_Securite_Verrouillage_Inactivite` | Ordinateurs | Verrouille la session après 600 s d'inactivité (créée en brique 03, testée ici) |
+| `C_Securite_PareFeu_Administration` | Ordinateurs | Ouvre WMI dans le pare-feu Windows, **depuis SRV-AD01 seulement**, profil Domaine |
+| `C_Config_Alimentation` | **Postes-fixes** | Écran éteint après 15 min, jamais de veille sur secteur |
+| `C_Securite_LAPS` | Ordinateurs | Mot de passe du compte local de secours, unique, chiffré, changé tous les 30 jours |
+
+---
+
+## Partie 0 — Comprendre avant de commencer
+
+### 0.1 Le besoin du client
+
+AEROTRANS veut des postes de travail :
+
+- **intégrés au domaine** : un salarié se connecte avec **son** compte, sur n'importe quel PC ;
+- qui **appliquent tout seuls** les règles de l'entreprise (verrouillage, alimentation) ;
 - que l'informatique peut **administrer à distance**, sans se déplacer ;
-- **durcis** : un pirate qui prend la main sur un PC ne doit pas pouvoir rebondir sur les autres.
+- **durcis** : un pirate qui prend la main sur un PC ne doit pas pouvoir **rebondir** sur les autres.
 
-## 2. Choix de la techno
+### 0.2 Les mots à connaître
 
-| Besoin | Choix retenu | Alternatives | Pourquoi |
+| Mot | Sens | Image |
+| --- | --- | --- |
+| **Joindre au domaine** | Inscrire le PC dans l'AD : il fait confiance au domaine et applique ses règles | **Embaucher** le PC dans l'entreprise |
+| **GPO** | Un paquet de réglages appliqué automatiquement à une OU | Une **note de service** |
+| **RSOP** | Le rapport « quelles GPO s'appliquent vraiment sur ce PC, et laquelle gagne » | Le **bilan** des notes de service reçues |
+| **RPC / WMI** | Les mécanismes qui permettent d'interroger un PC **à distance** | Le **téléphone** de l'administration |
+| **LAPS** | Un mot de passe admin local **différent sur chaque PC**, changé tout seul | Une **serrure différente** par bureau, au lieu d'un passe-partout |
+| **Mouvement latéral** | Un pirate qui passe d'un PC à l'autre avec le même mot de passe | Le cambrioleur qui a le **passe-partout** |
+
+### 0.3 Les choix
+
+| Besoin | Choix | Alternatives | Pourquoi |
 | --- | --- | --- | --- |
-| Système des postes | **Windows 11 Entreprise** (évaluation 90 j) | Windows 11 Pro | Édition des grandes entreprises : toutes les fonctions de sécurité et de gestion. La Pro suffit en PME, mais l'Entreprise est celle qu'on gère en ESN |
-| Réglages des postes | **GPO** Active Directory | Intune (cloud) | Les postes sont joints à l'AD local (brique 03). Intune : brique 08 |
-| Mot de passe admin local | **Windows LAPS** (intégré à Windows) | LAPS « historique » (MSI, abandonné), mot de passe identique partout | Unique par PC, changé tout seul, chiffré dans l'AD, sans logiciel à installer |
-| Compte géré par LAPS | **Gestion automatique** (compte `secours.local`) | Compte Administrateur intégré réactivé | Possible car tous les postes sont en Windows 11 24H2 ou plus (section 16.5) |
+| Système des postes | **Windows 11 Entreprise** (évaluation 90 j) | Windows 11 Pro | Édition des grandes entreprises, celle qu'on gère en ESN. La Pro suffit en PME |
+| Réglages des postes | **GPO** | Intune (cloud) | Les postes sont joints à l'AD local (brique 03). Intune : brique 08 |
+| Mot de passe admin local | **Windows LAPS** (intégré) | Ancien LAPS (logiciel, abandonné), mot de passe identique partout | Unique par PC, changé tout seul, chiffré dans l'AD |
+| Compte géré par LAPS | **Gestion automatique** (`secours.local`) | Compte `Administrateur` intégré réactivé | Possible car tous les postes sont en Windows 11 24H2 ou plus (étape 24) |
 
-## 3. Architecture
+### 0.4 L'architecture
 
 ```
           VLAN 10 Serveurs                         VLAN 20 Postes
@@ -40,183 +91,333 @@ AEROTRANS (25 salariés) veut des postes de travail :
 Adresses : [plan d'adressage](../docs/plan-adressage.md) · Flux : [matrice des flux](../docs/matrice-des-flux.md) ·
 Noms : [conventions](../docs/conventions.md).
 
-### GPO en place à la fin de la brique
+---
 
-| GPO | Liée à | Rôle |
-| --- | --- | --- |
-| `C_Securite_Verrouillage_Inactivite` | Ordinateurs | Verrouille la session après 600 s d'inactivité (brique 03, testée ici) |
-| `C_Securite_PareFeu_Administration` | Ordinateurs | Ouvre WMI dans le pare-feu Windows, **depuis SRV-AD01 seulement**, profil Domaine |
-| `C_Config_Alimentation` | **Postes-fixes** | Écran éteint après 15 min, jamais de veille sur secteur |
-| `C_Securite_LAPS` | Ordinateurs | Mot de passe du compte local de secours, unique, chiffré, changé tous les 30 jours |
+## Partie 1 — Créer et installer le poste
 
-## 4. Préparation
+### Étape 1 · La bonne ISO, vérifiée
 
-- ISO **Windows 11 Entreprise Évaluation (français)**, empreinte **SHA-256 vérifiée** à l'envoi
-  dans Proxmox. Une ISO « grand public » envoyée par erreur a été supprimée.
+🖱️ Proxmox > **local (pve01)** > **Images ISO** > **Téléverser** l'ISO **Windows 11 Entreprise Évaluation
+(français)**, avec l'empreinte **SHA-256** publiée par Microsoft.
 
-![ISO vérifiée](captures/02b-iso-entreprise-sha256-ok-grand-public-supprimee.png)
+❌ **Erreur du lab** : une première ISO **« grand public »** (Famille/Pro) avait été envoyée. Elle ne
+permet pas d'avoir l'édition Entreprise : **supprimée**.
 
-### Machine virtuelle 300 · PC-001
+✅ `checksum verified`, `TASK OK`.
 
-| Paramètre | Valeur | Pourquoi |
-| --- | --- | --- |
-| Machine | q35, **UEFI (OVMF)** + disque EFI, **TPM 2.0** | Exigences de Windows 11 (démarrage sécurisé, TPM) |
-| Disque | 64 Go, VirtIO SCSI, **discard**, **SSD** | Discard : l'espace libéré par Windows est rendu à Proxmox (ajouté en relisant le récapitulatif) |
-| Processeur | 2 cœurs, type **host** | Toutes les instructions du vrai processeur |
-| Mémoire | 4 Go | Minimum de Windows 11 |
-| Réseau | VirtIO, vmbr1, **tag 20** | Directement dans le VLAN Postes |
+![Téléversement](captures/01a-upload-iso-win11-sha256.png)
+![En cours](captures/01b-upload-iso-win11-en-cours.png)
+![Checksum OK](captures/01-upload-iso-win11-checksum-ok.png)
+![ISO Entreprise](captures/02-iso-win11-entreprise-eval.png)
+![Grand public supprimée](captures/02b-iso-entreprise-sha256-ok-grand-public-supprimee.png)
+
+### Étape 2 · Créer la VM 300 · PC-001
+
+🖱️ **Créer une VM** (case **Avancé** cochée) :
+
+| Onglet | Réglage | Valeur | Pourquoi |
+| --- | --- | --- | --- |
+| Général | ID / Nom | `300` / `PC-001` | 3xx = postes ; convention `PC-NNN` |
+| Système d'exploitation | ISO / type | Windows 11 Entreprise / Microsoft Windows 11 ; ✅ lecteur pour les pilotes VirtIO | |
+| Système | Machine / BIOS | **q35**, **UEFI (OVMF)** + disque EFI, ✅ **TPM 2.0** | Exigences de Windows 11 (démarrage sécurisé, puce TPM) |
+| Disques | Taille | `64` Gio, VirtIO SCSI, ✅ **discard**, ✅ **SSD** | Discard : l'espace libéré par Windows est rendu à Proxmox (ajouté **en relisant** le récapitulatif) |
+| Processeur | | `2` cœurs, **host** | |
+| Mémoire | | `4096` | Le minimum de Windows 11 |
+| Réseau | | VirtIO, `vmbr1`, **tag 20** | Directement dans le VLAN Postes |
 
 ![Récapitulatif](captures/03-creation-vm-pc001-confirmation.png)
 
-## 5. Installation
+### Étape 3 · Installer Windows 11
 
-1. **Aucun disque visible** : « Charger un pilote » → ISO virtio-win → `vioscsi\w11\amd64`.
-2. Pendant la configuration (OOBE), **pas de réseau** : la carte VirtIO n'a pas encore de pilote.
-   « Je n'ai pas Internet » → **compte local temporaire `tech.install`** (désactivé en section 14).
-3. Après l'installation : **virtio-win-guest-tools** (tous les pilotes VirtIO + agent QEMU).
+1. 🖱️ Démarrer, **Console**. Comme pour le serveur (brique 03) : **aucun disque visible** →
+   **Charger un pilote** > virtio-win > `vioscsi\w11\amd64`.
+2. Configuration de Windows (OOBE) : pays **France**, clavier **Français**.
 
-![OOBE sans réseau](captures/05-oobe-reseau-sans-pilote.png)
+![Pays](captures/04-oobe-pays-region.png)
+
+3. ❌ **Pas de réseau** : la carte VirtIO n'a pas encore de pilote. 🖱️ **Je n'ai pas Internet** >
+   **Continuer avec une configuration limitée** → création d'un **compte local temporaire**
+   `tech.install` (on le **désactivera** à l'étape 15).
+
+![Réseau sans pilote](captures/05-oobe-reseau-sans-pilote.png)
 ![Compte local](captures/06-oobe-compte-local.png)
 
-## 6. Licence : diagnostic sans réinstaller
+4. Sur le bureau : lecteur virtio-win > **virtio-win-guest-tools** > installer : tous les pilotes
+   (réseau compris) + l'agent QEMU.
 
-**Symptôme** : « La licence Windows a expiré » sur le bureau, dès la première connexion.
+### Étape 4 · Dépannage : « La licence Windows a expiré »
+
+❌ **Symptôme** : dès la première connexion, un message sur le bureau : « La licence Windows a expiré ».
+
+![Licence expirée](captures/07-bureau-licence-expiree.png)
+
+⌨️ Diagnostic, **sans réinstaller** (invite de commandes en administrateur) :
 
 | Commande | Résultat | Sens |
 | --- | --- | --- |
-| `slmgr /dlv` | EnterpriseEval, TIMEBASED_EVAL, erreur `0xC004F009` | Période de grâce expirée : l'évaluation **n'a jamais été activée** (installée hors ligne) |
-| `slmgr /ato` | Produit activé | Activation en ligne, une fois le pilote réseau installé |
+| `slmgr /dlv` | EnterpriseEval, TIMEBASED_EVAL, erreur `0xC004F009` | La période de grâce est passée : l'évaluation **n'a jamais été activée** (installée hors ligne) |
+| `slmgr /ato` | « Produit activé » | **Activation** en ligne, maintenant que le réseau marche |
 | `slmgr /xpr` | Expire le 11/01/2027 | 90 jours d'évaluation à partir de l'activation |
 
+💡 `slmgr` = l'outil de gestion des licences de Windows : `/dlv` = afficher le détail, `/ato` = activer,
+`/xpr` = date d'expiration.
+
 ![slmgr /dlv](captures/08-slmgr-dlv-eval-non-activee.png)
+![slmgr /ato](captures/09-slmgr-ato-produit-active.png)
 ![slmgr /xpr](captures/10-slmgr-xpr-expiration-janvier-2027.png)
 
-**En entreprise** : licences en volume, activées automatiquement par l'AD (*Active Directory
-Based Activation*) ou par un serveur KMS. Personne ne tape `slmgr` poste par poste.
+🏢 En entreprise : licences en volume, **activées automatiquement** par l'AD (*Active Directory Based
+Activation*) ou un serveur KMS. Personne ne tape `slmgr` poste par poste.
 
-## 7. Réseau : bail DHCP dans le VLAN 20
+### Étape 5 · Vérifier l'adresse IP
 
-`ipconfig /all` : **10.10.20.101/24**, passerelle 10.10.20.254, **serveur DHCP et DNS 10.10.10.10**,
-suffixe `lab.home.arpa`, bail de 8 jours. Le **relais DHCP** de pfSense fonctionne dans les deux sens.
+⌨️ `ipconfig /all`
+
+✅ `10.10.20.101/24`, passerelle `10.10.20.254`, **serveur DHCP et DNS `10.10.10.10`**, suffixe
+`lab.home.arpa`, bail de 8 jours. 💡 Le **relais DHCP** de pfSense fonctionne dans les deux sens : la
+demande du poste est arrivée au serveur Windows, et la réponse est revenue.
 
 ![Bail DHCP](captures/11-ipconfig-all-bail-dhcp-vlan20.png)
 
-## 8. Renommage et jonction au domaine
+---
 
-1. **Renommer avant de joindre** (`sysdm.cpl` → Modifier) : `DESKTOP-xxxx` → **PC-001**
-   (convention `PC-NNN`), redémarrage. Sinon le compte ordinateur arrive dans l'AD avec le mauvais nom.
-2. **Vérifier le DNS avant de joindre** : le poste trouve le contrôleur de domaine grâce à un
-   enregistrement SRV.
-   `Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.lab.home.arpa` → `srv-ad01.lab.home.arpa:389` ✅
-3. **Jonction** (`sysdm.cpl` → Domaine : `lab.home.arpa`) avec le compte `adm.paulo.rosa`, redémarrage.
-4. Le PC arrive dans **AEROTRANS/Ordinateurs** (grâce à `redircmp`, brique 03), puis il est
-   **déplacé dans Postes-fixes** : les GPO dépendent de l'OU.
+## Partie 2 — Joindre le poste au domaine
 
-![Contrôle DNS](captures/14-dns-srv-ldap-dc-ok.png)
+### Étape 6 · Renommer le PC **avant** de le joindre
+
+💡 Le compte de l'ordinateur est créé dans l'AD **avec le nom du moment**. Renommer après la jonction crée
+des incohérences (DNS, identifiants Kerberos).
+
+🖱️ **Windows + R** > `sysdm.cpl` > **Modifier** > Nom de l'ordinateur : `PC-001` > **OK** > redémarrer.
+
+⌨️ Vérification : `hostname` → `PC-001`.
+
+![Renommer](captures/12-sysdm-renommer-pc-001.png)
+![hostname](captures/13-hostname-pc-001.png)
+
+### Étape 7 · Vérifier que le PC trouve le contrôleur de domaine
+
+⌨️
+
+```powershell
+Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.lab.home.arpa
+```
+✅ `srv-ad01.lab.home.arpa`, port 389. 💡 C'est **grâce à cet enregistrement** qu'un PC trouve le DC. Si ça
+ne répond pas, la jonction échouera : on vérifie **avant**.
+
+![DNS SRV](captures/14-dns-srv-ldap-dc-ok.png)
+
+### Étape 8 · Joindre le domaine
+
+🖱️ `sysdm.cpl` > **Modifier** > **Membre d'un domaine** : `lab.home.arpa` > **OK** > identifiants
+**`adm.paulo.rosa`** (un compte qui a le droit de joindre) > « Bienvenue dans le domaine lab.home.arpa » >
+redémarrer.
+
+![Domaine](captures/15-sysdm-jonction-domaine-lab-home-arpa.png)
+![Identifiants](captures/16a-jonction-identifiants-adm.png)
 ![Bienvenue](captures/16-bienvenue-domaine-lab-home-arpa.png)
-![Postes-fixes](captures/19-aduc-pc001-dans-postes-fixes.png)
+![Écran après jonction](captures/17-ecran-connexion-apres-jonction.png)
 
-## 9. Première connexion d'une salariée
+### Étape 9 · Ranger le PC dans la bonne OU
 
-`nathalie.girard` (Comptabilité) se connecte :
+🖱️ Sur SRV-AD01 : **Utilisateurs et ordinateurs AD** > `AEROTRANS` > **Ordinateurs** : ✅ PC-001 est là
+(grâce à `redircmp`, brique 03), et **pas** dans `Computers`. Clic droit > **Déplacer** > **Postes-fixes**.
 
-- **changement de mot de passe imposé** à la première connexion ✅ ;
-- `whoami` → `lab\nathalie.girard` ; `whoami /groups` → GG_Comptabilite, **pas admin** ;
-- `gpresult /r /scope user` → aucune GPO utilisateur : normal, nos GPO n'ont que des
-  paramètres **ordinateur**.
+💡 Les GPO dépendent de l'OU : la GPO d'alimentation (étape 13) ne vise que `Postes-fixes`.
 
+![Dans Ordinateurs](captures/18-aduc-pc001-dans-ordinateurs.png)
+![Dans Postes-fixes](captures/19-aduc-pc001-dans-postes-fixes.png)
+![GPO liée](captures/20-gpmc-gpo-verrouillage-liee-ordinateurs.png)
+
+### Étape 10 · La première connexion d'une salariée
+
+🖱️ Sur PC-001 : **Autre utilisateur** > `nathalie.girard` (Comptabilité) > son mot de passe provisoire.
+
+✅ **Changement de mot de passe imposé** à la première connexion (réglé par le script d'import, brique 03).
+
+![Mot de passe à changer](captures/21-premiere-connexion-mdp-a-changer.png)
+![Changé](captures/22-mdp-change.png)
+
+⌨️ Vérifications :
+
+| Commande | Résultat | Sens |
+| --- | --- | --- |
+| `whoami` | `lab\nathalie.girard` | Connectée avec son compte **du domaine** |
+| `gpresult /r /scope user` | Aucune GPO utilisateur | Normal : nos GPO n'ont que des paramètres **ordinateur** |
+| `whoami /groups` | `GG_Comptabilite`, **pas** d'Administrateurs | ✅ **Pas admin** : moindre privilège |
+
+![whoami](captures/23-whoami-nathalie-girard.png)
+![gpresult](captures/24-gpresult-user-nathalie.png)
 ![Pas admin](captures/25-whoami-groups-pas-admin.png)
 
-## 10. Test de la GPO de verrouillage (10 minutes)
+---
 
-**Preuve n°1, le registre** : `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`
-→ `InactivityTimeoutSecs = 600`, lisible en simple utilisatrice.
+## Partie 3 — Tester la GPO de verrouillage
+
+### Étape 11 · Preuve n° 1 : le registre
+
+💡 Une GPO écrit ses réglages dans le **registre** du PC. Si la valeur est là, la GPO est arrivée.
+
+🖱️ Sur PC-001 (session de Nathalie) : `regedit` > `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`.
+
+✅ `InactivityTimeoutSecs = 600` (lisible en simple utilisatrice).
 
 ![Registre](captures/27b-registre-inactivitytimeoutsecs-600.png)
 
-**Preuve n°2, le chrono** : faussée au premier essai, la session se verrouillait **avant** 10 min.
+### Étape 12 · Preuve n° 2 : le chronomètre
 
-- **Cause** : Windows 11 éteint l'écran après **5 minutes** par défaut, et l'extinction verrouille la session.
-  **Le premier mécanisme qui se déclenche gagne.**
-- **Méthode** : neutraliser l'un pour tester l'autre. Écran passé à 15 min → chrono à 21:58 →
-  **verrouillage à 22:08 pile** ✅
-- **Correction durable** : la GPO `C_Config_Alimentation` (section 12).
+🎯 Vérifier que la session se verrouille bien **au bout de 10 minutes**, pas avant, pas après.
 
+❌ **Premier essai faussé** : départ à 21:45… et la session se verrouille **avant** 10 minutes.
+
+💡 **Cause** : Windows 11 **éteint l'écran après 5 minutes** par défaut, et l'extinction de l'écran
+**verrouille aussi** la session. **Le premier mécanisme qui se déclenche gagne.**
+
+![Chrono 21:45](captures/27c-chrono-depart-21h45.png)
+![Verrouillée](captures/27a-session-nathalie-verrouillee.png)
 ![Écran 5 min](captures/27d-alimentation-ecran-5-min.png)
+
+✅ **Méthode** : **neutraliser l'un pour tester l'autre**. Extinction de l'écran passée à 15 min →
+chrono à 21:58 → **verrouillage à 22:08 pile**.
+
+![Chrono 21:58](captures/27e-chrono-depart-21h58.png)
 ![22:08 pile](captures/27f-verrouillage-gpo-22h08-pile-10-min.png)
 
-## 11. Administration à distance : vérifier les GPO d'un poste depuis le serveur
+💡 **Correction durable** : la GPO d'alimentation (étape 13) règle l'écran à 15 min sur tous les postes fixes.
 
-**Besoin** : depuis SRV-AD01, lancer l'assistant **Résultats de stratégie de groupe** (RSOP) sur
-PC-001, sans se déplacer.
+### Étape 13 · La GPO d'alimentation des postes fixes
 
-**Symptôme** : « Le serveur RPC n'est pas disponible ».
+💡 **Pourquoi seulement les postes fixes ?** Un **PC fixe** qui se met en veille rate les mises à jour de
+nuit, les sauvegardes et l'administration à distance → **jamais de veille**. Un **portable** sur batterie
+**doit** se mettre en veille (batterie, chauffe dans le sac) → il ne reçoit pas cette GPO. C'est tout
+l'intérêt d'avoir deux sous-OU.
 
+🖱️ **Gestion des stratégies de groupe** > clic droit sur l'OU **Postes-fixes** > **Créer un objet GPO dans ce
+domaine, et le lier ici** > `C_Config_Alimentation` (« Config » et non « Securite » : c'est du confort et
+du fonctionnement) > clic droit > **Modifier** :
+
+Configuration ordinateur > Stratégies > Modèles d'administration > Système > **Gestion de l'alimentation** :
+
+| Dossier > paramètre | Valeur |
+| --- | --- |
+| Paramètres de l'affichage et de la vidéo > **Désactiver l'affichage (sur secteur)** | Activé, **900** s (15 min : plus que les 10 min du verrouillage, c'est la GPO de verrouillage qui décide) |
+| Paramètres de la veille > **Spécifier le délai de veille du système (sur secteur)** | Activé, **0** = jamais |
+
+❌ **Pièges dans la liste** : « délai de veille **prolongée** » (c'est l'hibernation) et « délai de veille
+**si l'ordinateur n'est pas utilisé** » (après un réveil automatique) ne sont **pas** les bons.
+
+![Liée à Postes-fixes](captures/46-gpo-alimentation-liee-postes-fixes.png)
+![Écran 900 s](captures/47a-gpo-alimentation-ecran-secteur-900s.png)
+![Veille jamais](captures/47b-gpo-alimentation-veille-secteur-0-jamais.png)
+
+⌨️ **Vérification sur PC-001** (après `gpupdate /force`) :
+
+- Paramètres > Système > Alimentation : écran **15 min, grisé** : Nathalie ne peut pas le changer ✅ ;
+- la ligne « veille » n'apparaît pas : `powercfg /a` montre que **la VM ne gère aucun état de veille**
+  (« l'hyperviseur ne prend pas en charge… »), donc Windows cache l'option ;
+- `powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE` → sur secteur **0x00000000** = jamais ✅ ; sur
+  batterie **0x258** = 600 s, non touché.
+
+![Grisé](captures/48a-pc-001-ecran-15-min-grise.png)
+![powercfg /a](captures/48b-powercfg-a-vm-sans-veille.png)
+![powercfg /q](captures/48c-powercfg-standbyidle-secteur-0.png)
+
+---
+
+## Partie 4 — Administrer le poste à distance
+
+### Étape 14 · Le besoin, et l'erreur « serveur RPC indisponible »
+
+🎯 Depuis SRV-AD01, lancer **Résultats de stratégie de groupe** (RSOP) sur PC-001 : savoir quelles GPO
+s'appliquent, **sans se déplacer**.
+
+🖱️ **Gestion des stratégies de groupe** > clic droit sur **Résultats de stratégie de groupe** > **Assistant** >
+**Un autre ordinateur** : `PC-001`.
+
+❌ « **Le serveur RPC n'est pas disponible** ».
+
+![Assistant](captures/26a-assistant-rsop-pc001.png)
 ![Erreur RPC](captures/26b-rsop-erreur-rpc-indisponible.png)
 
-### 11.1 Diagnostic : deux pare-feu sur le chemin
+### Étape 15 · Diagnostic : il y a deux pare-feu sur le chemin
 
-| Test | Résultat | Conclusion |
-| --- | --- | --- |
-| `Test-NetConnection 10.10.20.101 -Port 135` | False | Le port 135 (RPC) n'est pas joignable |
-| Journaux pfSense | SERVEURS / *Default deny* 10.10.10.10 → 10.10.20.101:135 | **pfSense bloque** (refus par défaut, règles au moindre privilège depuis la brique 03) |
+⌨️ Sur SRV-AD01 :
 
-RPC fonctionne comme un standard téléphonique : on appelle le **port 135**, qui indique sur quel
-**port dynamique** (49152 à 65535) rappeler pour parler à WMI. Il faut donc ouvrir les deux.
+```powershell
+Test-NetConnection 10.10.20.101 -Port 135
+```
+❌ `TcpTestSucceeded : False` : le port **135** (RPC) n'est pas joignable.
 
-![Journal pfSense](captures/29-pfsense-deny-serveurs-vers-pc001-135.png)
+![135 False](captures/28-test-netconnection-135-false.png)
 
-### 11.2 Premier pare-feu : pfSense
+🖱️ pfSense > **Status > System Logs > Firewall** : `SERVEURS … Default deny … 10.10.10.10 → 10.10.20.101:135`.
+→ **pfSense bloque** (refus par défaut : le VLAN Serveurs est au moindre privilège depuis la brique 03).
 
-Procédure ([procédure pare-feu](../docs/procedure-pare-feu.md)) : besoin écrit dans la matrice
-des flux (ligne 7), **sauvegarde de la configuration**, photo des règles, puis :
+![Journal avant](captures/29a-pfsense-logs-avant-filtre.png)
+![Blocage 135](captures/29-pfsense-deny-serveurs-vers-pc001-135.png)
 
-1. **Alias de ports** `PORTS_RPC_WMI` = `135` et `49152:65535`. Dans pfSense, une plage s'écrit
-   avec **deux-points**, pas avec un tiret.
-2. **Règle** sur l'interface SERVEURS, ajoutée **en fin de liste** :
+💡 **Comment marche RPC** : comme un **standard téléphonique**. On appelle d'abord le **port 135**, qui
+répond « rappelle WMI sur tel **port dynamique** » (entre 49152 et 65535). Il faut donc ouvrir **les deux**.
+
+### Étape 16 · Premier pare-feu : pfSense
+
+🎯 Autoriser **seulement SRV-AD01** à joindre les postes en RPC/WMI. Méthode :
+[procédure pare-feu](../docs/procedure-pare-feu.md) : besoin écrit dans la matrice des flux (ligne 7),
+**sauvegarde de la configuration**, photo des règles avant.
+
+![Sauvegarde](captures/30-pfsense-backup-avant-regle-serveurs-postes.png)
+![Règles avant](captures/31-pfsense-regles-serveurs-avant.png)
+
+🖱️ **Firewall > Aliases** > onglet **Ports** > **Add** : nom `PORTS_RPC_WMI`, ports `135` et `49152:65535`.
+💡 Dans pfSense, une plage s'écrit avec **deux-points** (`49152:65535`), pas avec un tiret.
+
+![Alias](captures/32-pfsense-alias-ports-rpc-wmi.png)
+
+🖱️ **Firewall > Rules > SERVEURS** > **Add** (en **fin de liste**) :
 
 | Champ | Valeur | Pourquoi |
 | --- | --- | --- |
 | Action | Pass | |
-| Protocole | TCP | |
-| Source | `10.10.10.10` (seul) | Moindre privilège : un autre serveur du VLAN (le futur GLPI) ne peut pas s'en servir |
+| Protocol | TCP | |
+| Source | Single host : `10.10.10.10` | **Moindre privilège** : un autre serveur du VLAN (le futur GLPI) ne peut pas s'en servir |
 | Destination | **POSTES subnets** | |
-| Ports | `PORTS_RPC_WMI` | |
-| Description | `Autorise SRV-AD01 vers POSTES RPC/WMI (admin a distance)` | **57 caractères maximum** (au-delà, coupée dans les journaux) ; sans accents, comme les autres règles |
+| Destination port | `PORTS_RPC_WMI` | |
+| Description | `Autorise SRV-AD01 vers POSTES RPC/WMI (admin a distance)` | 57 caractères maximum (sinon coupée dans les journaux), sans accents |
 
-> ⚠️ **Piège rencontré** : la destination était restée sur **Any** au premier essai. La règle
-> aurait « marché », mais elle ouvrait RPC vers **tous** les réseaux, Internet compris.
-> Une règle trop large fonctionne aussi : c'est pour ça qu'on teste **ce qui doit être bloqué**,
-> pas seulement ce qui doit passer.
+❌ **Piège rencontré** : la destination était restée sur **Any** au premier essai. La règle aurait « marché »,
+mais elle ouvrait RPC vers **tous** les réseaux, Internet compris. 👉 **Une règle trop large fonctionne
+aussi** : c'est pour ça qu'on teste **ce qui doit être bloqué**, pas seulement ce qui doit passer.
 
 ![Piège Any](captures/33a-pfsense-regle-destination-any-a-corriger.png)
 ![Règle corrigée](captures/33b-pfsense-regle-srv-ad01-vers-postes-rpc.png)
 ![Règles après](captures/34-pfsense-regles-serveurs-apres.png)
 
-**Test** : `Test-NetConnection PC-001 -Port 135` → **True**. Le tout premier essai a donné False :
-pfSense était encore en train de **recharger les règles** (bandeau *reloading in the background*).
+⌨️ `Test-NetConnection 10.10.20.101 -Port 135` → ✅ **True**.
 
-Le **ping**, lui, échoue toujours alors que pfSense l'autorise : c'est le **pare-feu Windows** du poste
-qui refuse de répondre, par défaut. Preuve qu'il y a bien un deuxième pare-feu.
+❌ Le tout premier essai a encore donné False : pfSense était en train de **recharger les règles** (bandeau
+*reloading in the background*). On relance le test.
 
-![Test 135 True](captures/36-test-netconnection-135-ip-true.png)
+![False puis True](captures/35-test-netconnection-135-ip-false-nom-true.png)
+![True](captures/36-test-netconnection-135-ip-true.png)
 
-**Après** : nouvelle sauvegarde de la configuration pfSense (étape 12 de la procédure).
+💡 Le **ping**, lui, échoue toujours alors que pfSense l'autorise : c'est le **pare-feu Windows** du poste qui
+refuse de répondre. Preuve qu'il y a bien **un deuxième pare-feu**. Après : nouvelle sauvegarde de pfSense.
 
-### 11.3 Deuxième pare-feu : Windows, par GPO
+### Étape 17 · Deuxième pare-feu : Windows, par GPO
 
-RSOP échoue encore (« serveur RPC indisponible ») : le port 135 répond, mais le pare-feu Windows
-refuse le port dynamique de WMI.
+❌ RSOP échoue encore : le port 135 répond, mais le pare-feu Windows refuse le **port dynamique** de WMI.
 
 ![Encore RPC](captures/37-rsop-erreur-rpc-pare-feu-windows.png)
 
-**En entreprise, on ne règle pas le pare-feu poste par poste** : une GPO s'applique à tous les PC,
+🏢 **En entreprise, on ne règle jamais le pare-feu poste par poste** : une GPO s'applique à tous les PC,
 y compris les futurs.
 
-GPO **`C_Securite_PareFeu_Administration`**, liée à **Ordinateurs** (héritée par Postes-fixes et Portables) :
-*Configuration ordinateur → Stratégies → Paramètres Windows → Paramètres de sécurité → Pare-feu
-Windows Defender avec fonctions avancées de sécurité → Règles de trafic entrant → Nouvelle règle →
-**Prédéfinie** → « Infrastructure de gestion Windows (WMI) »* (c'est le nom français de WMI).
+🖱️ GPMC > clic droit sur **Ordinateurs** > **Créer un objet GPO… et le lier ici** >
+`C_Securite_PareFeu_Administration` > **Modifier** > Configuration ordinateur > Stratégies > Paramètres
+Windows > Paramètres de sécurité > **Pare-feu Windows Defender avec fonctions avancées de sécurité** >
+**Règles de trafic entrant** > clic droit > **Nouvelle règle** > **Prédéfinie** > « **Infrastructure de
+gestion Windows (WMI)** » (le nom français de WMI : chercher à la lettre **I**) > coche les 3 règles >
+**Autoriser la connexion**.
 
 | Règle | Rôle |
 | --- | --- |
@@ -224,105 +425,114 @@ Windows Defender avec fonctions avancées de sécurité → Règles de trafic en
 | WMI (WMI-In) | Le service WMI, sur le port dynamique |
 | WMI (ASync-In) | Les réponses envoyées plus tard (asynchrones) |
 
-Puis, **sur chacune des 3 règles** :
+![GPO liée](captures/38-gpo-pare-feu-admin-creee-liee-ordinateurs.png)
+![Prédéfinie WMI](captures/39-gpo-regles-predefinies-wmi.png)
+![3 règles](captures/40-gpo-3-regles-wmi-creees.png)
 
-- onglet **Étendue** → Adresse IP distante → **10.10.10.10** uniquement ;
-- onglet **Avancé** → profil **Domaine** uniquement : la règle ne s'ouvre qu'au bureau, jamais sur
-  le Wi-Fi d'un hôtel (profil Public).
+🖱️ Puis, **sur chacune des 3 règles** (double-clic) :
+- onglet **Étendue** > **Adresse IP distante** > **Ces adresses IP** > **Ajouter** > `10.10.10.10` ;
+- onglet **Avancé** > profils : ✅ **Domaine** uniquement (❌ Privé, ❌ Public).
 
-C'est la **défense en profondeur** : la même restriction sur le réseau (pfSense) et sur le poste.
+💡 **Profil Domaine** : la règle ne s'ouvre qu'**au bureau** (quand le PC voit le domaine), jamais sur le
+Wi-Fi d'un hôtel (profil Public). Et la même restriction « SRV-AD01 seulement » existe **sur le réseau**
+(pfSense) **et sur le poste** : c'est la **défense en profondeur**.
 
-![3 règles profil Domaine](captures/42-gpo-3-regles-wmi-profil-domaine.png)
+![DCOM étendue](captures/41a-regle-dcom-in-etendue-10.10.10.10.png)
+![DCOM avancé](captures/41b-regle-dcom-in-avance-domaine.png)
+![WMI étendue](captures/41c-regle-wmi-in-etendue-10.10.10.10.png)
+![WMI avancé](captures/41d-regle-wmi-in-avance-domaine.png)
+![ASync étendue](captures/41e-regle-async-in-etendue-ajout-ip.png)
+![ASync avancé](captures/41f-regle-async-in-avance-domaine.png)
+![3 règles Domaine](captures/42-gpo-3-regles-wmi-profil-domaine.png)
 
-`gpupdate /force` sur PC-001 suffit, **sans redémarrage** (les règles de pare-feu s'appliquent
-tout de suite). `gpresult /r /scope computer` répond **« Accès refusé »** pour Nathalie : normal,
-une utilisatrice ne voit pas les réglages de l'ordinateur.
+⌨️ Sur PC-001 : `gpupdate /force` (pas besoin de redémarrer : les règles de pare-feu s'appliquent tout de
+suite).
 
-### 11.4 Résultat
+💡 `gpresult /r /scope computer` répond **« Accès refusé »** pour Nathalie : normal, une utilisatrice ne voit
+pas les réglages de l'ordinateur. On vérifie **depuis le serveur** (étape suivante).
 
-L'assistant RSOP trouve `LAB\nathalie.girard` sur PC-001 (la liste vient de WMI), et le rapport
-s'affiche : PC dans `AEROTRANS/Ordinateurs/Postes-fixes`, verrouillage **600 s** gagné par
-`C_Securite_Verrouillage_Inactivite`, les 3 règles WMI gagnées par `C_Securite_PareFeu_Administration`
-avec l'étendue **10.10.10.10** et le profil **Domaine** ✅
+![gpupdate](captures/43-gpupdate-ok-gpresult-computer-acces-refuse.png)
 
-> Le message « Internet Explorer … configuration de sécurité renforcée » qui s'affiche d'abord n'est
-> **pas** une erreur réseau : le rapport est une page HTML, et Windows Server bloque les pages web
-> (un serveur ne sert pas à naviguer). On clique sur **Fermer**, **sans** ajouter le site aux sites
-> de confiance.
+### Étape 18 · Le résultat : le rapport RSOP
 
-![Rapport](captures/45a-rsop-rapport-pc-001-general.png)
-![Verrouillage gagnant](captures/45b-rsop-verrouillage-600s-gpo-gagnante.png)
-![Règle WMI](captures/45d-rsop-regle-dcom-in-10.10.10.10-domaine.png)
+🖱️ Assistant RSOP sur PC-001 : ✅ il trouve `LAB\nathalie.girard` (la liste vient de WMI) et le rapport
+s'affiche.
 
-## 12. GPO d'alimentation des postes fixes
+❌ Un message « Internet Explorer… configuration de sécurité renforcée » apparaît d'abord : ce n'est **pas** une
+erreur réseau. Le rapport est une page web, et Windows Server bloque les pages web (un serveur ne sert pas à
+naviguer). 🖱️ **Fermer**, **sans** ajouter le site aux sites de confiance.
 
-GPO **`C_Config_Alimentation`** (« Config » et non « Securite » : confort et fonctionnement), liée
-**uniquement à Postes-fixes** :
+![Utilisateur trouvé](captures/44a-rsop-selection-utilisateur-nathalie-ok.png)
+![IE ESC](captures/44b-rsop-rapport-cree-ie-esc-bloque-affichage.png)
 
-- un **PC fixe** qui se met en veille rate les mises à jour de nuit, les sauvegardes et
-  l'administration à distance → **jamais de veille** ;
-- un **portable** sur batterie **doit** se mettre en veille (batterie, chauffe dans le sac) →
-  il ne reçoit pas cette GPO. C'est l'intérêt d'avoir deux sous-OU.
+✅ Le rapport montre : PC dans `AEROTRANS/Ordinateurs/Postes-fixes` ; verrouillage **600 s** gagné par
+`C_Securite_Verrouillage_Inactivite` ; les 3 règles WMI gagnées par `C_Securite_PareFeu_Administration`,
+avec l'étendue **10.10.10.10** et le profil **Domaine**.
 
-*Configuration ordinateur → Stratégies → Modèles d'administration → Système → Gestion de l'alimentation* :
+![Général](captures/45a-rsop-rapport-pc-001-general.png)
+![Verrouillage](captures/45b-rsop-verrouillage-600s-gpo-gagnante.png)
+![Pare-feu](captures/45c-rsop-pare-feu-osg-c-securite-parefeu-admin.png)
+![DCOM-In](captures/45d-rsop-regle-dcom-in-10.10.10.10-domaine.png)
+![ASync-In](captures/45e-rsop-regle-async-in-10.10.10.10-domaine.png)
+![WMI-In](captures/45f-rsop-regle-wmi-in-10.10.10.10-domaine.png)
 
-| Paramètre | Valeur |
-| --- | --- |
-| Paramètres de l'affichage et de la vidéo → **Désactiver l'affichage (sur secteur)** | 900 s (15 min, plus que les 10 min du verrouillage : c'est la GPO de verrouillage qui décide) |
-| Paramètres de la veille → **Spécifier le délai de veille du système (sur secteur)** | 0 = jamais |
+---
 
-> Pièges dans la liste : « délai de veille **prolongée** » (l'hibernation) et « délai de veille
-> **si l'ordinateur n'est pas utilisé** » (après un réveil automatique) ne sont pas les bons.
+## Partie 5 — Durcir l'annuaire et le poste
 
-**Vérification sur PC-001** :
+### Étape 19 · `ms-DS-MachineAccountQuota` à 0
 
-- Paramètres → Marche/Arrêt : écran **15 min, grisé**, Nathalie ne peut pas le changer ✅ ;
-- la ligne « veille » n'apparaît pas : `powercfg /a` montre que **la VM ne gère aucun état de veille**
-  (« l'hyperviseur ne prend pas en charge… »), donc Windows cache l'option ;
-- `powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE` → sur secteur (courant alternatif) **0x00000000**
-  = jamais ✅ ; sur batterie (courant continu) **0x258** = 600 s, non touché.
+💡 Par défaut, **n'importe quel utilisateur du domaine peut joindre 10 ordinateurs**. Risques : un PC
+personnel non géré dans le domaine, et surtout un **faux compte ordinateur** créé par un pirate, point de
+départ de plusieurs attaques d'élévation de privilèges.
 
-![Écran grisé](captures/48a-pc-001-ecran-15-min-grise.png)
-![powercfg](captures/48c-powercfg-standbyidle-secteur-0.png)
+🖱️ Sur SRV-AD01 : **Windows + R** > `adsiedit.msc` > clic droit **ADSI Edit** > **Connexion** > contexte de
+nommage **par défaut** > OK. Clic droit sur `DC=lab,DC=home,DC=arpa` > **Propriétés** > attribut
+**`ms-DS-MachineAccountQuota`** > **Modifier** : `10` → **`0`** > OK > **Appliquer**.
 
-## 13. Durcissement : ms-DS-MachineAccountQuota à 0
-
-Par défaut, **n'importe quel utilisateur du domaine peut joindre 10 ordinateurs**. Risques :
-un PC personnel non géré dans le domaine, et surtout un **faux compte ordinateur** créé par un
-pirate, point de départ de plusieurs attaques d'élévation de privilèges.
-
-**ADSI Edit** (`adsiedit.msc`) → contexte de nommage par défaut → clic droit sur
-`DC=lab,DC=home,DC=arpa` → Propriétés → `ms-DS-MachineAccountQuota` : **10 → 0** → Appliquer.
-
-> ADSI Edit montre tous les attributs bruts de l'annuaire, sans garde-fou : on ne touche qu'à
-> ce qui est prévu.
-
-Vérification : `Get-ADObject (Get-ADDomain).DistinguishedName -Properties ms-DS-MachineAccountQuota` → **0**.
-Rien n'est cassé : PC-001 est déjà joint, et les admins du domaine gardent le droit de joindre.
-Les autres auront une **délégation** (section 15).
+⚠️ ADSI Edit montre **tous** les attributs bruts de l'annuaire, **sans garde-fou** : on ne touche qu'à ce qui
+est prévu.
 
 ![Avant](captures/49-adsiedit-machineaccountquota-10-avant.png)
+![Après](captures/50-adsiedit-machineaccountquota-0-apres.png)
+
+⌨️ Vérification :
+
+```powershell
+Get-ADObject (Get-ADDomain).DistinguishedName -Properties ms-DS-MachineAccountQuota
+```
+✅ `0`. Rien n'est cassé : PC-001 est déjà joint, et les admins du domaine gardent le droit de joindre. Les
+autres auront une **délégation** (étape 21).
+
 ![Vérification](captures/51-powershell-machineaccountquota-0-guid-floute.png)
 
-## 14. Désactivation du compte local tech.install
+### Étape 20 · Désactiver le compte local d'installation
 
-Compte **administrateur local** créé pendant l'installation, mot de passe qui n'expire jamais,
-plus utilisé : une porte dérobée idéale.
+💡 `tech.install` (étape 3) est un **administrateur local**, avec un mot de passe qui n'expire jamais, et
+plus utilisé : **une porte dérobée idéale**.
 
-- Depuis la session de Nathalie, Gestion de l'ordinateur s'ouvre en **lecture seule** : la
-  modification renvoie **« Accès refusé »** (moindre privilège) ;
-- Gestion de l'ordinateur en **« Exécuter en tant qu'administrateur »** (UAC, compte admin du domaine)
-  → Utilisateurs et groupes locaux → `tech.install` → **Le compte est désactivé**.
-
-**Désactivé plutôt que supprimé** : retour arrière en un clic. Tous les comptes locaux sont maintenant
-désactivés (petite flèche sur l'icône).
+❌ Depuis la session de Nathalie, **Gestion de l'ordinateur** s'ouvre en lecture seule : la modification
+renvoie « **Accès refusé** ». Normal (moindre privilège).
 
 ![Accès refusé](captures/52a-tech-install-desactivation-acces-refuse-nathalie.png)
+
+🖱️ **Démarrer** > clic droit sur **Gestion de l'ordinateur** > **Exécuter en tant qu'administrateur** (UAC,
+compte admin du domaine) > **Utilisateurs et groupes locaux** > **Utilisateurs** > double-clic sur
+`tech.install` > ✅ **Le compte est désactivé** > OK.
+
+💡 **Désactivé plutôt que supprimé** : retour arrière en un clic si besoin.
+
+✅ Tous les comptes locaux sont désactivés (petite flèche vers le bas sur l'icône).
+
+![Désactivé](captures/52b-tech-install-desactive-en-admin.png)
 ![Tous désactivés](captures/53-utilisateurs-locaux-tous-desactives.png)
 
-## 15. Délégation : joindre des PC sans être admin du domaine
+### Étape 21 · Déléguer la jonction des PC, sans être admin du domaine
 
-Le technicien qui installe les PC n'a pas à détenir les clés du domaine. Méthode **AGDLP** :
+🎯 Le technicien qui installe les PC n'a pas à détenir **les clés du domaine**. On lui donne **juste** le
+droit de joindre des PC dans l'OU Ordinateurs.
+
+💡 **Méthode AGDLP** : on ne donne jamais un droit à une personne, mais à un groupe :
 
 ```
 paulo.rosa (compte du quotidien, non admin)
@@ -331,10 +541,19 @@ paulo.rosa (compte du quotidien, non admin)
          → reçoit la délégation sur l'OU Ordinateurs
 ```
 
-Un deuxième technicien ? On l'ajoute à GG_Informatique, sans retoucher aux permissions.
+Un 2e technicien arrive ? On l'ajoute à `GG_Informatique`, **sans retoucher aux permissions**.
 
-**Délégation de contrôle** sur l'OU Ordinateurs → tâche **personnalisée** → **Objets Ordinateur**
-seulement → créer et supprimer → autorisations :
+🖱️ OU **Groupes** > **Nouveau** > **Groupe** : `DL_OU-Ordinateurs_JoindrePC`, étendue **Domaine local**,
+type **Sécurité**, description > onglet **Membres** > **Ajouter** `GG_Informatique`.
+
+![Création](captures/54a-groupe-dl-ou-ordinateurs-joindrepc-creation.png)
+![Ajout GG](captures/54b-groupe-dl-ajout-gg-informatique.png)
+![Membres](captures/54c-groupe-dl-membres-gg-informatique.png)
+![Description](captures/54d-groupe-dl-description-ok.png)
+
+🖱️ Clic droit sur l'OU **Ordinateurs** > **Délégation de contrôle** > Ajouter `DL_OU-Ordinateurs_JoindrePC` >
+**Créer une tâche personnalisée à déléguer** > **Seulement des objets suivants** : ✅ **Objets Ordinateur**,
+✅ Créer, ✅ Supprimer > Autorisations (cocher **Spécifiques à la propriété** pour les voir) :
 
 | Autorisation | Pourquoi |
 | --- | --- |
@@ -343,142 +562,196 @@ seulement → créer et supprimer → autorisations :
 | Écriture validée vers le nom d'hôte DNS | Enregistrer `PC-xxx.lab.home.arpa` ; « validée » = l'AD vérifie la cohérence |
 | Écriture validée vers le nom de principal du service (SPN) | Les étiquettes Kerberos du PC, vérifiées elles aussi |
 
-> **Pas de « Contrôle total »**, que proposent beaucoup de tutos : il permettrait de modifier les
-> droits et de prendre la main sur les comptes ordinateur existants de l'OU.
+❌ **Pas de « Contrôle total »**, que proposent beaucoup de tutos : il permettrait de modifier les droits et
+de prendre la main sur les comptes ordinateur **existants** de l'OU.
 
-Vérification : Affichage → **Fonctionnalités avancées** → Propriétés de l'OU → Sécurité → Avancé :
-5 entrées `DL_OU-Ordinateurs_JoindrePC`. On y voit aussi « Tout le monde – Refuser » (la protection
-contre la suppression accidentelle) et « Opérateurs de compte », groupe intégré qui peut lui aussi
-créer des ordinateurs et doit rester **vide**.
+![Objets ordinateur](captures/55-delegation-objets-ordinateur-creer-supprimer.png)
+![Écritures validées](captures/56a-delegation-ecritures-validees-dns-spn.png)
+![Mot de passe et restrictions](captures/56b-delegation-reinit-mdp-restrictions-compte.png)
+![Résumé](captures/57a-delegation-resume-1.png)
+![Résumé suite](captures/57b-delegation-resume-2-autorisations.png)
 
-![Autorisations](captures/56b-delegation-reinit-mdp-restrictions-compte.png)
+🖱️ **Vérification** : menu **Affichage** > ✅ **Fonctionnalités avancées** > Propriétés de l'OU Ordinateurs >
+onglet **Sécurité** > **Avancé** : 5 entrées `DL_OU-Ordinateurs_JoindrePC`.
+
+💡 On y voit aussi « Tout le monde – Refuser » (la **protection contre la suppression accidentelle**) et
+« Opérateurs de compte », un groupe intégré qui peut lui aussi créer des ordinateurs et doit rester **vide**.
+
 ![ACL de l'OU](captures/57c-ou-ordinateurs-securite-avancee-ace-dl.png)
 
-Test réel (joindre un PC avec `paulo.rosa`) : avec le portable PO-001 (section 22).
+Test réel (joindre un PC avec `paulo.rosa`) : à faire avec le portable PO-001.
 
-## 16. LAPS : un mot de passe admin local unique par poste
+---
 
-**Le problème** : si le compte administrateur local a le **même mot de passe sur tous les PC**,
-le pirate qui le récupère sur un poste (avec Mimikatz par exemple) se connecte à tous les autres.
-C'est le **mouvement latéral**, au cœur de la plupart des attaques par rançongiciel.
+## Partie 6 — LAPS : un mot de passe admin local unique par poste
 
-**Windows LAPS** : chaque PC génère un mot de passe **unique et aléatoire**, le **change tout seul**,
-et le range **chiffré** dans son objet AD, lisible seulement par les personnes autorisées.
+> 💡 **Le problème** : si le compte administrateur local a le **même mot de passe sur tous les PC**, le
+> pirate qui le récupère sur un poste (avec Mimikatz par exemple) se connecte à **tous** les autres. C'est
+> le **mouvement latéral**, au cœur de la plupart des attaques par rançongiciel.
+>
+> **Windows LAPS** : chaque PC génère un mot de passe **unique et aléatoire**, le **change tout seul**, et le
+> range **chiffré** dans son objet AD, lisible seulement par les personnes autorisées.
 
-### 16.1 Instantané avant de toucher au schéma
+### Étape 22 · Un instantané avant de toucher au schéma
 
-L'extension du schéma (la structure de tout l'annuaire) est **irréversible**. Instantané Proxmox
-`avant-laps-schema`, **avec la RAM**.
+💡 Le **schéma**, c'est la **structure** de tout l'annuaire (quels types d'objets et quels champs existent).
+L'étendre est **irréversible**.
 
-> **Écart entreprise** : on ne restaure pas un instantané de DC quand il y en a plusieurs (*USN rollback*,
-> brique 03). On fait une sauvegarde de l'état système, on teste dans un lab, on passe en fenêtre de
-> maintenance. Avec un seul DC, l'instantané est sans risque.
+🖱️ Proxmox > SRV-AD01 > **Instantanés** > `avant-laps-schema`, **avec la RAM**.
 
 ![Instantané](captures/58-proxmox-snapshot-srv-ad01-avant-laps-schema.png)
 
-### 16.2 Extension du schéma, en « juste à temps »
+🏢 On ne restaure pas un instantané de DC quand il y en a plusieurs (*USN rollback*, brique 03). En
+entreprise : sauvegarde de l'état système, test dans un lab, fenêtre de maintenance. Avec un seul DC,
+l'instantané est sans risque.
 
-Seul le groupe **Administrateurs du schéma** peut modifier le schéma. Il ne contient que le compte
-`Administrateur` intégré, et ça doit rester ainsi le reste du temps.
+### Étape 23 · Étendre le schéma, en « juste à temps »
 
-1. `whoami` → `lab\adm.paulo.rosa`. `whoami /groups | findstr /i "schéma"` ne renvoie rien… mais
-   `findstr` gère mal les accents : vérification graphique, le groupe ne contient bien que `Administrateur`.
-2. **Ajout temporaire** d'`adm.paulo.rosa` au groupe, puis **déconnexion / reconnexion** : les groupes
-   sont chargés dans le **jeton** à l'ouverture de session.
-3. `whoami /groups | Select-String "sch"` → `LAB\Administrateurs du schéma`, groupe activé.
-4. `Update-LapsADSchema -Verbose` (pas d'interface graphique pour cette étape) → 7 attributs `msLAPS-*`
-   ajoutés à la classe *computer*, droit étendu `ms-LAPS-Encrypted-Password-Attributes` créé.
-5. **Retrait immédiat** du compte du groupe.
+💡 Seul le groupe **Administrateurs du schéma** peut modifier le schéma. Il ne contient que le compte
+`Administrateur` intégré, et **ça doit rester ainsi le reste du temps**.
 
-C'est le **Just-In-Time** : le droit est donné pour l'opération, puis retiré. En SOC, l'ajout d'un
-membre dans un groupe de RID 512 (Admins du domaine), 518 (schéma) ou 519 (entreprise) déclenche
-une alerte (événement **4728** sur le DC).
+1. ⌨️ `whoami` → `lab\adm.paulo.rosa`. `whoami /groups | findstr /i "schéma"` ne renvoie rien… ❌ mais
+   `findstr` gère mal les **accents** : on vérifie à l'interface : le groupe ne contient bien que `Administrateur`.
 
+![findstr vide](captures/59a-whoami-findstr-schema-vide.png)
+![whoami](captures/59b-whoami-adm-paulo-rosa.png)
 ![Groupe avant](captures/59c-administrateurs-du-schema-avant.png)
+
+2. 🖱️ **Ajout temporaire** d'`adm.paulo.rosa` au groupe **Administrateurs du schéma**, puis
+   **déconnexion / reconnexion**. 💡 Les groupes sont chargés dans le **jeton** de sécurité à l'ouverture de
+   session : sans reconnexion, le nouveau droit n'est pas pris en compte.
+
+![Ajout temporaire](captures/59d-administrateurs-du-schema-ajout-temporaire-adm.png)
+
+3. ⌨️ `whoami /groups | Select-String "sch"` → ✅ `LAB\Administrateurs du schéma`, groupe activé.
+
+![Groupe actif](captures/60a-whoami-groups-administrateurs-du-schema-sid-floute.png)
+
+4. ⌨️ PowerShell **en administrateur** :
+
+```powershell
+Update-LapsADSchema -Verbose
+```
+✅ 7 attributs `msLAPS-*` ajoutés aux objets ordinateur, et le droit `ms-LAPS-Encrypted-Password-Attributes`
+créé. (Il n'y a pas d'interface graphique pour cette étape.)
+
 ![Schéma étendu](captures/60b-update-lapsadschema-ok.png)
-![Groupe après](captures/61-administrateurs-du-schema-adm-retire.png)
 
-### 16.3 Permission des postes sur leur propre objet
+5. 🖱️ **Retrait immédiat** d'`adm.paulo.rosa` du groupe.
 
-`Set-LapsADComputerSelfPermission -Identity "OU=Ordinateurs,OU=AEROTRANS,DC=lab,DC=home,DC=arpa"` :
-chaque PC de l'OU (et des sous-OU) peut écrire **son propre** mot de passe dans l'AD.
+![Retiré](captures/61-administrateurs-du-schema-adm-retire.png)
+
+💡 C'est le **Just-In-Time** : le droit est donné **pour l'opération**, puis retiré. En SOC, l'ajout d'un
+membre dans un groupe de RID 512 (Admins du domaine), 518 (schéma) ou 519 (entreprise) déclenche une alerte
+(événement **4728** sur le DC).
+
+### Étape 24 · Les postes peuvent écrire leur propre mot de passe
+
+⌨️
+
+```powershell
+Set-LapsADComputerSelfPermission -Identity "OU=Ordinateurs,OU=AEROTRANS,DC=lab,DC=home,DC=arpa"
+```
+✅ Chaque PC de l'OU (et des sous-OU) peut écrire **son propre** mot de passe dans l'AD, et seulement le sien.
 
 ![Permission](captures/62-set-lapsadcomputerselfpermission-ou-ordinateurs.png)
 
-### 16.4 GPO C_Securite_LAPS
+### Étape 25 · La GPO C_Securite_LAPS
 
-Liée à **Ordinateurs** : les portables en ont encore plus besoin (ils sortent, se perdent, se volent).
-*Configuration ordinateur → Stratégies → Modèles d'administration → Système → LAPS* :
+🖱️ GPMC > clic droit sur **Ordinateurs** > **Créer un objet GPO… et le lier ici** > `C_Securite_LAPS` >
+**Modifier** > Configuration ordinateur > Stratégies > Modèles d'administration > Système > **LAPS** :
 
 | Paramètre | Valeur | Pourquoi |
 | --- | --- | --- |
-| Configurer le répertoire de sauvegarde de mot de passe | **Active Directory** | « Azure Active Directory » (= Entra ID) sert aux PC joints au cloud. Par défaut : désactivé, LAPS ne fait rien |
-| Paramètres du mot de passe | Complexité maximale, **20** caractères, **30** jours | La « longueur de phrase secrète » ne sert qu'avec une complexité de type phrase secrète |
+| Configurer le répertoire de sauvegarde de mot de passe | Activé : **Active Directory** | « Azure Active Directory » (= Entra ID) sert aux PC joints au cloud. Par défaut : désactivé, LAPS ne fait rien |
+| Paramètres du mot de passe | Complexité maximale, **20** caractères, **30** jours | La « longueur de phrase secrète » ne sert qu'avec une complexité de type phrase |
 | Activer le chiffrement du mot de passe | Activé | Possible à partir du niveau fonctionnel 2016 (ici 2025). Déchiffrement : Admins du domaine |
-| Configurer la gestion automatique des comptes | Compte **personnalisé** `secours.local`, **activé**, nom non aléatoire | Voir 16.5 |
+| Configurer la gestion automatique des comptes | Activé : compte **personnalisé** `secours.local`, compte **activé**, nom non aléatoire | Voir étape 26 |
 
-![Paramètres du mot de passe](captures/64-gpo-laps-parametres-mot-de-passe-20-30j.png)
-![Gestion automatique](captures/69-gpo-laps-gestion-auto-compte-secours-local.png)
+💡 Liée à **Ordinateurs** (pas seulement Postes-fixes) : les **portables** en ont encore plus besoin (ils
+sortent, se perdent, se volent).
 
-### 16.5 Quel compte confier à LAPS ? (erreur corrigée)
+![Répertoire AD](captures/63a-gpo-laps-repertoire-sauvegarde-active-directory.png)
+![Liste](captures/63b-gpo-laps-liste-parametres.png)
+![Mot de passe](captures/64-gpo-laps-parametres-mot-de-passe-20-30j.png)
+![3 paramètres](captures/65-gpo-laps-3-parametres-actives.png)
 
-LAPS sert surtout quand le PC a **perdu la relation d'approbation** avec le domaine (portable resté
-des mois au placard, restauration ancienne) : plus aucun compte du domaine ne marche, seul un
-**compte local** permet d'entrer. Or le compte `Administrateur` intégré est **désactivé** par Windows :
-s'il le reste, LAPS range un mot de passe inutilisable.
+### Étape 26 · Quel compte confier à LAPS ? (erreur corrigée)
+
+💡 LAPS sert surtout quand le PC a **perdu la relation d'approbation** avec le domaine (portable resté des
+mois au placard, restauration ancienne) : plus aucun compte du domaine ne marche, seul un **compte local**
+permet d'entrer. Or le compte `Administrateur` intégré est **désactivé** par Windows : s'il le reste, LAPS
+range un mot de passe **inutilisable**.
 
 | Méthode | Principe | Quand |
 | --- | --- | --- |
 | Classique | Réactiver l'`Administrateur` intégré par GPO (« Comptes : statut du compte Administrateur ») et le confier à LAPS | Parc mélangé (Windows 10, anciens serveurs) : la plus répandue aujourd'hui |
-| **Gestion automatique** (retenue) | LAPS **crée et gère** son propre compte (`secours.local`) ; l'`Administrateur` intégré reste désactivé | Tous les postes en Windows 11 **24H2 ou plus** (vérifié : `winver` → 25H2, build 26200) |
+| **Gestion automatique** (retenue) | LAPS **crée et gère** son propre compte (`secours.local`) ; l'`Administrateur` intégré reste désactivé | Tous les postes en Windows 11 **24H2 ou plus** |
 
-La méthode classique a d'abord été configurée « par prudence », sans vérifier la version de Windows,
-puis annulée (paramètre remis à **Non défini**) : on vérifie la version **avant** de choisir.
+❌ **Erreur du lab** : la méthode classique avait d'abord été configurée « par prudence », **sans vérifier** la
+version de Windows. ✅ Vérification : `winver` → **25H2** (build 26200), donc gestion automatique possible.
+Le réglage classique est remis à **Non défini**. 👉 On vérifie la version **avant** de choisir.
 
-Le nom `secours.local` : pas de « admin », rien qui ressemble aux comptes du domaine `adm.prenom.nom`.
+![Administrateur activé (annulé)](captures/66-gpo-laps-etat-compte-administrateur-active.png)
+![winver 25H2](captures/67-winver-pc-001-25h2.png)
+![Remis à Non défini](captures/68-gpo-laps-statut-administrateur-non-defini.png)
+![Gestion automatique](captures/69-gpo-laps-gestion-auto-compte-secours-local.png)
+
+💡 **Le nom `secours.local`** : pas de « admin », rien qui ressemble aux comptes du domaine `adm.prenom.nom`.
 Sans nom, Windows utilise `WLapsAdmin`, connu de tous. L'option « nom aléatoire » (qui change à chaque
 rotation) est plus sûre mais plus lourde au quotidien : non activée pour l'instant.
 
-![winver](captures/67-winver-pc-001-25h2.png)
+### Étape 27 · Tester LAPS
 
-### 16.6 Test
-
-1. PC-001 : `gpupdate /force`, attendre une minute.
-2. PC-001, Gestion de l'ordinateur : compte **`secours.local` créé et actif**, description « Ce compte
-   est actuellement géré… » ; `Administrateur` toujours désactivé ✅
-3. SRV-AD01, Utilisateurs et ordinateurs AD → PC-001 → onglet **LAPS** : compte `secours.local`,
-   expiration **20/11/2026** (30 jours), mot de passe **masqué**. On ne clique **pas** sur « Afficher
-   le mot de passe » pour une capture.
-4. `Get-LapsADPassword -Identity PC-001`, dans un PowerShell **élevé** (obligatoire sur un DC) :
-
-| Champ | Valeur |
-| --- | --- |
-| Account | secours.local |
-| Password | `System.Security.SecureString` (jamais en clair sans `-AsPlainText`) |
-| ExpirationTimestamp | 20/11/2026 |
-| Source | **EncryptedPassword** |
-| DecryptionStatus | Success |
-| AuthorizedDecryptor | LAB\Admins du domaine |
-
-> `Get-LapsAADPassword` (avec **AAD**) est la commande pour Entra ID : tapée par erreur, elle ne
-> connaît pas `-Identity`.
+1. ⌨️ PC-001 : `gpupdate /force`, attendre une minute.
+2. 🖱️ PC-001, **Gestion de l'ordinateur** (en administrateur) : ✅ compte **`secours.local` créé et actif**,
+   description « Ce compte est actuellement géré… » ; `Administrateur` toujours désactivé.
 
 ![Compte créé](captures/70-pc-001-compte-secours-local-cree.png)
-![Onglet LAPS](captures/71-aduc-pc-001-onglet-laps-masque.png)
-![Get-LapsADPassword](captures/72b-get-lapsadpassword-chiffre-success.png)
 
-## 17. Récapitulatif sécurité
+3. 🖱️ SRV-AD01, **Utilisateurs et ordinateurs AD** > PC-001 > onglet **LAPS** : compte `secours.local`,
+   expiration **20/11/2026** (30 jours), mot de passe **masqué**. ⚠️ On ne clique **pas** sur « Afficher le mot de
+   passe » pour une capture.
+
+![Onglet LAPS](captures/71-aduc-pc-001-onglet-laps-masque.png)
+
+4. ⌨️ PowerShell **en administrateur** (obligatoire sur un DC) :
+
+```powershell
+Get-LapsADPassword -Identity PC-001
+```
+
+| Champ | Valeur | Sens |
+| --- | --- | --- |
+| Account | secours.local | Le compte géré |
+| Password | `System.Security.SecureString` | Jamais affiché en clair sans `-AsPlainText` |
+| ExpirationTimestamp | 20/11/2026 | Prochain changement |
+| Source | **EncryptedPassword** | Stocké **chiffré** |
+| DecryptionStatus | Success | On a le droit de le déchiffrer |
+| AuthorizedDecryptor | LAB\Admins du domaine | Qui peut le lire |
+
+❌ **Erreurs du lab** : `Get-LapsAADPassword` (avec **AAD**) est la commande pour **Entra ID** : tapée par erreur,
+elle ne connaît pas `-Identity`. Et dans un PowerShell **non élevé**, la commande refuse (*requires elevation*).
+
+![Erreurs](captures/72a-get-lapsadpassword-erreurs-aad-et-non-eleve.png)
+![Succès](captures/72b-get-lapsadpassword-chiffre-success.png)
+
+---
+
+## Annexes
+
+### A. Récapitulatif sécurité
 
 | Mesure | Contre quoi |
 | --- | --- |
 | Verrouillage à 10 min | Poste laissé ouvert à la pause |
-| RPC/WMI ouvert **seulement** depuis SRV-AD01, sur pfSense **et** sur le poste | Un poste ou un serveur compromis qui sonde les autres |
+| RPC/WMI ouvert **seulement** depuis SRV-AD01, sur pfSense **et** sur le poste, profil Domaine | Un poste ou un serveur compromis qui sonde les autres |
 | MachineAccountQuota = 0 + délégation au moindre privilège | Faux comptes ordinateur, PC non gérés |
 | Comptes locaux désactivés (tech.install, Administrateur) | Comptes oubliés aux mots de passe éternels |
 | LAPS chiffré, compte de secours au nom non standard | Mouvement latéral avec un mot de passe local partagé |
 | Administrateurs du schéma vide (Just-In-Time) | Modification de la structure de l'annuaire |
 
-## 18. Équivalents PowerShell
+### B. Équivalents PowerShell
 
 Les commandes **testées** dans le lab sont marquées ✅. Les autres sont l'équivalent des clics,
 données pour référence : à valider dans un lab avant usage.
@@ -538,79 +811,76 @@ Set-LapsADPasswordExpirationTime -Identity PC-001                      # forcer 
 Invoke-LapsPolicyProcessing                                            # sur le poste : appliquer LAPS tout de suite
 ```
 
-## 19. Dépannages rencontrés
+### C. Dépannages rencontrés
 
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
 | Aucun disque à l'installation | Pilote VirtIO SCSI absent | `vioscsi\w11\amd64` |
 | Pas de réseau pendant l'OOBE | Pilote NetKVM absent | Compte local temporaire, puis virtio-win-guest-tools |
 | « La licence Windows a expiré » | Évaluation installée hors ligne, jamais activée (`0xC004F009`) | `slmgr /ato` une fois le réseau en place |
-| Session verrouillée avant 10 min | Extinction de l'écran à 5 min (défaut Windows 11) | Neutraliser pour tester, puis GPO d'alimentation |
+| Session verrouillée avant 10 min | Extinction de l'écran à 5 min (défaut de Windows 11) | Neutraliser pour tester, puis GPO d'alimentation |
 | RSOP : « serveur RPC indisponible » (1) | pfSense, refus par défaut SERVEURS → POSTES | Alias + règle depuis SRV-AD01 seulement |
 | `Test-NetConnection` False juste après la règle | Règles pfSense encore en rechargement | Relancer le test |
 | RSOP : « serveur RPC indisponible » (2) | Pare-feu Windows du poste, WMI fermé | GPO, règles WMI prédéfinies limitées à 10.10.10.10 / Domaine |
 | « Windows Management Instrumentation » introuvable | Nom français : « Infrastructure de gestion Windows (WMI) » | Chercher à la lettre I |
-| Rapport RSOP bloqué par Internet Explorer | Configuration de sécurité renforcée d'IE sur le serveur | Fermer, sans ajouter aux sites de confiance |
+| Rapport RSOP bloqué par Internet Explorer | Sécurité renforcée d'IE sur le serveur | Fermer, sans ajouter aux sites de confiance |
 | `gpresult /scope computer` : Accès refusé | Utilisatrice non administratrice | Normal ; vérifier depuis le serveur (RSOP) |
 | Option « veille » absente des Paramètres | La VM ne gère aucun état de veille | `powercfg /a`, `powercfg /q` |
 | tech.install : Accès refusé | Console ouverte sans élévation | Exécuter en tant qu'administrateur |
 | `findstr "schéma"` ne trouve rien | `findstr` gère mal les accents | `Select-String`, ou vérification graphique |
 | `Get-LapsADPassword` : *requires elevation* | PowerShell non élevé sur un DC | Exécuter en tant qu'administrateur |
 
-## 20. Écarts lab / entreprise
+### D. Écarts entre le lab et l'entreprise
 
-| Lab | Entreprise | Pourquoi l'écart |
+| Dans le lab | En entreprise | Pourquoi l'écart |
 | --- | --- | --- |
 | Activation `slmgr` à la main | Activation par l'AD ou KMS, licences en volume | Évaluation du lab |
 | PC installé à la main | Déploiement automatisé (image, MDT, Autopilot) | Brique 14 |
-| Instantané avant l'extension du schéma | Sauvegarde de l'état système + test en lab + fenêtre de maintenance | Un seul DC dans le lab |
+| Instantané avant l'extension du schéma | Sauvegarde de l'état système + test en lab + fenêtre de maintenance | Un seul DC |
 | Un seul poste | Des dizaines : d'où les GPO plutôt que les réglages locaux | Lab |
 | Option « veille » invisible | Visible et grisée sur un vrai PC fixe | Matériel virtuel |
 | Mots de passe LAPS lisibles par les Admins du domaine | Groupe dédié de lecteurs LAPS (support N2), lecture auditée | À faire |
 | Délégation non encore testée par une vraie jonction | Testée en recette avant la mise en service | Pas de 2e poste (PO-001 prévu) |
 | Administration depuis la console Proxmox | Bureau à distance depuis le VLAN d'administration | Attend le switch (brique 02) |
 
-## 21. Utilisation en entreprise : 3 cas concrets
+### E. Utilisation en entreprise : 3 cas concrets
 
-1. **Un portable revient après 6 mois au placard** : « la relation d'approbation a échoué ».
-   Le technicien lit le mot de passe LAPS de ce PC dans l'AD, se connecte avec `secours.local`,
-   rejoint de nouveau le domaine. Le mot de passe sera changé automatiquement ensuite.
-2. **Un poste est infecté** : le pirate récupère le mot de passe local… qui ne marche sur aucun autre PC.
+1. **Un portable revient après 6 mois au placard** : « la relation d'approbation a échoué ». Le technicien lit
+   le mot de passe LAPS de ce PC dans l'AD, se connecte avec `secours.local`, rejoint de nouveau le domaine.
+   Le mot de passe sera changé automatiquement ensuite.
+2. **Un poste est infecté** : le pirate récupère le mot de passe local… qui ne marche sur **aucun autre PC**.
    Il ne peut pas non plus interroger les autres postes par WMI : seul SRV-AD01 y a droit.
-3. **Un salarié dit que son PC ne verrouille pas** : depuis le serveur, RSOP sur son poste montre
-   en une minute quelle GPO s'applique, et laquelle gagne.
+3. **Un salarié dit que son PC ne se verrouille pas** : depuis le serveur, RSOP sur son poste montre en une
+   minute quelle GPO s'applique, et laquelle gagne.
 
-## 22. Questions d'entretien
+### F. Questions d'entretien (avec la réponse)
 
-- **Pourquoi renommer un PC avant de le joindre au domaine ?** Le compte ordinateur est créé avec
-  le nom du moment ; renommer après crée des incohérences (DNS, SPN).
-- **Une GPO ne s'applique pas sur un poste, que vérifies-tu ?** Le poste est-il dans la bonne OU,
-  la GPO liée au bon endroit, partie ordinateur ou utilisateur, filtrage de sécurité ; puis
-  `gpupdate /force`, `gpresult /r` ou RSOP depuis le serveur.
+- **Pourquoi renommer un PC avant de le joindre au domaine ?** Le compte ordinateur est créé avec le nom du
+  moment ; renommer après crée des incohérences (DNS, SPN).
+- **Une GPO ne s'applique pas sur un poste, que vérifies-tu ?** Le poste est-il dans la bonne OU, la GPO liée
+  au bon endroit, partie ordinateur ou utilisateur, filtrage de sécurité ; puis `gpupdate /force`,
+  `gpresult /r` ou RSOP depuis le serveur.
 - **RSOP à distance échoue avec « serveur RPC indisponible » : ta démarche ?** Tester le port 135
-  (`Test-NetConnection`), lire les journaux du pare-feu réseau, puis le pare-feu Windows du poste
-  (ports dynamiques WMI). Un pare-feu à la fois, un test entre chaque étape.
+  (`Test-NetConnection`), lire les journaux du pare-feu réseau, puis le pare-feu Windows du poste (ports
+  dynamiques de WMI). Un pare-feu à la fois, un test entre chaque étape.
 - **Pourquoi deux pare-feu ?** Défense en profondeur : si l'un est mal réglé ou contourné, l'autre protège.
-- **Qu'est-ce que ms-DS-MachineAccountQuota ?** Le nombre de PC qu'un utilisateur standard peut
-  joindre (10 par défaut). On le met à 0 et on délègue.
-- **Pourquoi pas « Contrôle total » dans une délégation ?** Il donne aussi le droit de modifier les
-  permissions et de prendre le contrôle des objets existants.
-- **Qu'est-ce que LAPS et contre quelle attaque ?** Un mot de passe admin local unique par poste,
-  changé automatiquement : il bloque le mouvement latéral (*pass-the-hash* avec un mot de passe partagé).
-- **Différence entre l'ancien LAPS et Windows LAPS ?** L'ancien était un logiciel à installer, mot
-  de passe en clair dans l'AD ; Windows LAPS est intégré, chiffre le mot de passe, sait gérer Entra ID
-  et créer son propre compte.
-- **Qui peut modifier le schéma, et comment l'as-tu fait ?** Les Administrateurs du schéma ; ajout
-  temporaire, reconnexion (jeton), opération, retrait immédiat (Just-In-Time).
-- **Pourquoi un compte admin local s'il y a le domaine ?** Pour entrer quand le poste a perdu le
-  contact avec le domaine.
+- **Qu'est-ce que ms-DS-MachineAccountQuota ?** Le nombre de PC qu'un utilisateur standard peut joindre (10 par
+  défaut). On le met à 0 et on délègue.
+- **Pourquoi pas « Contrôle total » dans une délégation ?** Il donne aussi le droit de modifier les permissions
+  et de prendre le contrôle des objets existants.
+- **Qu'est-ce que LAPS, et contre quelle attaque ?** Un mot de passe admin local unique par poste, changé
+  automatiquement : il bloque le mouvement latéral (*pass-the-hash* avec un mot de passe partagé).
+- **Différence entre l'ancien LAPS et Windows LAPS ?** L'ancien était un logiciel à installer, mot de passe en
+  clair dans l'AD ; Windows LAPS est intégré, chiffre le mot de passe, sait gérer Entra ID et créer son propre compte.
+- **Qui peut modifier le schéma, et comment l'as-tu fait ?** Les Administrateurs du schéma ; ajout temporaire,
+  reconnexion (jeton), opération, retrait immédiat (Just-In-Time).
+- **Pourquoi un compte admin local s'il y a le domaine ?** Pour entrer quand le poste a perdu le contact avec le domaine.
 
-## 23. Points en suspens
+### G. Points en suspens
 
 - Tester la délégation : joindre le portable **PO-001** avec `paulo.rosa` (non admin).
 - Vérifier que le groupe **Opérateurs de compte** est vide.
 - Groupe dédié aux **lecteurs LAPS** et audit des lectures (brique 11, Wazuh).
-- Supprimer l'instantané `avant-laps-schema` après quelques jours sans incident.
 - Règles précises du VLAN Postes vers SRV-AD01 (remplacer la règle provisoire « Postes → tout »).
-- Renommer ou laisser désactivé l'`Administrateur` intégré (fait : désactivé) ; option « nom aléatoire » de LAPS à évaluer.
+- Option « nom aléatoire » de LAPS à évaluer.
 - Script de délégation (dsacls / Set-Acl) dans la brique 09.

@@ -6,7 +6,7 @@ complète de l'informatique d'une **PME fictive de 25 salariés**, sur un mini P
 comme le ferait un technicien d'ESN chez un client : choix justifiés, installation,
 sécurisation, tests de validation et procédures.
 
-**Chaque brique a son tuto complet**, avec captures, dépannage réel et questions d'entretien.
+**Chaque brique a son tuto complet, écrit pas à pas pour un débutant** : chaque clic, chaque commande expliquée, ce qu'on doit voir, les erreurs réellement commises et leur correction, les écarts entre le lab et l'entreprise, et des questions d'entretien. Un résumé en tête de chaque tuto pour les lecteurs pressés.
 
 ## Avancement
 
@@ -14,10 +14,10 @@ sécurisation, tests de validation et procédures.
 | --- | --- | --- | --- |
 | 00 | [Hyperviseur](00-proxmox/) | Proxmox VE 9, LVM-thin, RBAC, 2FA TOTP | ✅ Terminé |
 | 01 | [Pare-feu et VLAN](01-pfsense/) | pfSense CE 2.9, 5 VLAN, DHCP, règles, recette | ✅ Terminé |
-| 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 En cours |
+| 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 Prochaine |
 | 03 | [Annuaire](03-active-directory/) | Windows Server 2025 : AD DS, DNS, DHCP + relais, OU, GPO, FGPP, PowerShell | ✅ Terminé |
 | 04 | [Postes de travail](04-postes-gpo/) | Windows 11 Entreprise, jonction, GPO (pare-feu, alimentation), RSOP à distance, durcissement AD, délégation, Windows LAPS chiffré | ✅ Terminé |
-| 05 | Support et parc | GLPI | 🔜 Prochaine |
+| 05 | [Support et parc](05-glpi/) | GLPI 11 (Debian 13, Apache, PHP-FPM, MariaDB), GLPI Agent + OAuth, LDAPS vers l'AD, PKI AD CS, synchro nocturne | ✅ Terminé |
 | 06 | Supervision | Zabbix | ⏳ À faire |
 | 07 | Sauvegarde | Veeam | ⏳ À faire |
 | 08 | Cloud Microsoft | Microsoft 365, Intune, Entra ID | ⏳ À faire |
