@@ -14,7 +14,7 @@ sécurisation, tests de validation et procédures.
 | --- | --- | --- | --- |
 | 00 | [Hyperviseur](00-proxmox/) | Proxmox VE 9, LVM-thin, RBAC, 2FA TOTP | ✅ Terminé |
 | 01 | [Pare-feu et VLAN](01-pfsense/) | pfSense CE 2.9, 5 VLAN, DHCP, règles, recette | ✅ Terminé |
-| 02 | Commutation | Cisco Catalyst 2960C (VLAN, trunk, SSH) | 🔜 Prochaine |
+| 02 | [Commutation](02-switch-cisco/) | Cisco Catalyst 2960C : remise à zéro, 6 VLAN, ports access + bpduguard, VLAN parking, trunk 802.1Q, SSH v2, NTP, bannière | ✅ Terminé |
 | 03 | [Annuaire](03-active-directory/) | Windows Server 2025 : AD DS, DNS, DHCP + relais, OU, GPO, FGPP, PowerShell | ✅ Terminé |
 | 04 | [Postes de travail](04-postes-gpo/) | Windows 11 Entreprise, jonction, GPO (pare-feu, alimentation), RSOP à distance, durcissement AD, délégation, Windows LAPS chiffré | ✅ Terminé |
 | 05 | [Support et parc](05-glpi/) | GLPI 11 (Debian 13, Apache, PHP-FPM, MariaDB), GLPI Agent + OAuth, LDAPS vers l'AD, PKI AD CS, synchro nocturne | ✅ Terminé |
@@ -22,7 +22,7 @@ sécurisation, tests de validation et procédures.
 | 07 | Sauvegarde | Veeam | ⏳ À faire |
 | 08 | Cloud Microsoft | Microsoft 365, Intune, Entra ID | ⏳ À faire |
 | 09 | Automatisation | PowerShell | ⏳ À faire |
-| 10 | Automatisation et IA | n8n + Ollama (alertes Zabbix → tickets GLPI) | ⏳ À faire |
+| 10 | IA locale sécurisée et automatisation | Ollama + Open WebUI (LDAPS vers l'AD, cloisonné, journalisé), puis n8n (alertes Zabbix → tickets GLPI) | ⏳ À faire |
 | 11 | Sécurité | Wazuh | ⏳ À faire |
 
 ## Architecture cible

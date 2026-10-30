@@ -29,7 +29,7 @@ distribuées par DHCP**.
 | 20 | Postes de travail | 10.10.20.0/24 | 10.10.20.254 | .100 – .199, bail 8 j | SRV-AD01 via le relais pfSense |
 | 30 | Wi-Fi salariés | 10.10.30.0/24 | 10.10.30.254 | à créer (brique Wi-Fi) | SRV-AD01 via relais |
 | 40 | Wi-Fi invités | 10.10.40.0/24 | 10.10.40.254 | à créer, bail court | à décider |
-| 99 | Administration | 10.10.99.0/24 | 10.10.99.254 | .100 – .199 | pfSense |
+| 99 | Administration | 10.10.99.0/24 | 10.10.99.254 | **aucun** (adresses fixes uniquement) | — (corrigé le 30/10 : pfSense fait du relais DHCP vers SRV-AD01 et ne peut pas être serveur ; en entreprise, le VLAN d'admin est en adresses fixes) |
 
 Options DHCP du VLAN 20 : 003 routeur `10.10.20.254`, 006 DNS `10.10.10.10` (le contrôleur
 de domaine, jamais pfSense : sinon les postes ne trouvent pas le domaine), 015 domaine `lab.home.arpa`.
@@ -47,6 +47,8 @@ de domaine, jamais pfSense : sinon les postes ne trouvent pas le domaine), 015 d
 | 10.10.20.254 | fw01 | pfSense, passerelle VLAN 20 | 100 |
 | 10.10.30.254 | fw01 | pfSense, passerelle VLAN 30 | 100 |
 | 10.10.40.254 | fw01 | pfSense, passerelle VLAN 40 | 100 |
+| 10.10.99.1 | SW-CORE01 | Switch Cisco 2960C, administration SSH (brique 02) | — |
+| 10.10.99.10 | ADM-001 | Poste d'administration (Acer), port Fa0/2 | — |
 | 10.10.99.254 | fw01 | pfSense, passerelle VLAN 99 | 100 |
 
 VM de recette : `test-poste` (VM 900, Alpine), adresse DHCP dans le VLAN 20.
